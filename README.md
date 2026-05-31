@@ -92,16 +92,11 @@ struct Point
   x: f64
   y: f64
 
-  fn new(x: f64, y: f64) -> Point
-    Point
-      x: x
-      y: y
-
   fn distance(self) -> f64
     (self.x * self.x + self.y * self.y).sqrt()
 ```
 
-`Type()` is sugar for `Type::new()`.
+`fn new` is auto-generated from fields — `Point(3.0, 4.0)` just works.
 
 ### Control Flow
 

@@ -55,9 +55,27 @@ fn emit_struct(name: &str, traits: &[String], fields: &[Field], methods: &[Metho
     let own_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_none()).collect();
     let trait_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_some()).collect();
 
+    // Auto-generate fn new if struct has fields and no explicit fn new
+    let has_new = own_methods.iter().any(|m| m.name == "new");
+    let auto_new = if !has_new && !fields.is_empty() {
+        let params = fields.iter()
+            .map(|f| format!("{}: {}", f.name, emit_ty_owned(&f.ty)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let field_inits = fields.iter()
+            .map(|f| format!("        {},\n", f.name))
+            .collect::<String>();
+        Some(format!("fn new({params}) -> {name} {{\n    {name} {{\n{field_inits}    }}\n}}\n"))
+    } else {
+        None
+    };
+
     // impl Struct { own methods }
-    if !own_methods.is_empty() {
+    if !own_methods.is_empty() || auto_new.is_some() {
         out.push_str(&format!("\nimpl {name} {{\n"));
+        if let Some(new_fn) = auto_new {
+            out.push_str(&indent_block(&new_fn));
+        }
         for m in &own_methods {
             out.push_str(&indent_block(&emit_method(m)));
         }
@@ -299,10 +317,11 @@ fn emit_expr(expr: &Expr) -> String {
         }
 
         Expr::Call { func, args, .. } => {
-            // Uppercase() with no args → Type::new()
+            // Uppercase(args...) → Type::new(args...)
             if let Expr::Ident { name, .. } = func.as_ref() {
-                if args.is_empty() && name.starts_with(|c: char| c.is_uppercase()) {
-                    return format!("{name}::new()");
+                if name.starts_with(|c: char| c.is_uppercase()) {
+                    let a = args.iter().map(emit_expr).collect::<Vec<_>>().join(", ");
+                    return format!("{name}::new({a})");
                 }
             }
             let f = emit_expr(func);

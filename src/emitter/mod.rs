@@ -292,6 +292,12 @@ fn emit_expr(expr: &Expr) -> String {
         }
 
         Expr::Call { func, args, .. } => {
+            // Uppercase() with no args → Type::new()
+            if let Expr::Ident { name, .. } = func.as_ref() {
+                if args.is_empty() && name.starts_with(|c: char| c.is_uppercase()) {
+                    return format!("{name}::new()");
+                }
+            }
             let f = emit_expr(func);
             let a = args.iter().map(emit_expr).collect::<Vec<_>>().join(", ");
             format!("{f}({a})")
@@ -321,7 +327,7 @@ fn emit_expr(expr: &Expr) -> String {
         Expr::Match { scrutinee, arms, .. } => {
             let s = emit_expr(scrutinee);
             let arms_str = arms.iter().map(|arm| {
-                format!("    {} => {},", emit_expr(&arm.pattern), emit_expr(&arm.body))
+                format!("    {} => {},", emit_expr(&arm.pattern), emit_expr_bare(&arm.body))
             }).collect::<Vec<_>>().join("\n");
             format!("match {s} {{\n{arms_str}\n}}")
         }

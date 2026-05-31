@@ -138,7 +138,7 @@ fn handle(keep stream: TcpStream, keep store: Arc<Mutex<Store>>)
     respond_json(stream, "404 Not Found", "{\"error\":\"not found\"}")
 
 fn main()
-  let store = Arc::new(Mutex::new(Store::new()))
+  let store = Arc::new(Mutex::new(Store()))
   let listener = TcpListener::bind("127.0.0.1:3000").unwrap!
   println!("Todo server running on http://localhost:3000")
   for stream in listener.incoming()

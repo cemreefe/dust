@@ -38,7 +38,7 @@ struct Stack
     self.values.last().copied()
 
 fn eval(line: str) -> str
-  mut stack = Stack::new()
+  mut stack = Stack()
   for token in line.split_whitespace()
     match token.parse::<f64>()
       Ok(n) -> stack.push(n)

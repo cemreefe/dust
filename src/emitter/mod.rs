@@ -11,6 +11,7 @@ pub fn emit(items: &[Item]) -> String {
 struct SigTable {
     fns:     HashMap<String, Vec<bool>>, // fn_name  → [should_ref per arg]
     methods: HashMap<String, Vec<bool>>, // method_name → [should_ref per arg]
+    structs_with_new: std::collections::HashSet<String>, // structs with explicit fn new
 }
 
 fn should_ref_param(p: &Param) -> bool {
@@ -22,24 +23,33 @@ fn should_ref_param(p: &Param) -> bool {
 fn build_sig_table(items: &[Item]) -> SigTable {
     let mut fns     = HashMap::new();
     let mut methods = HashMap::new();
+    let mut structs_with_new = std::collections::HashSet::new();
     for item in items {
         match item {
             Item::Fn { name, params, .. } => {
                 fns.insert(name.clone(), params.iter().map(should_ref_param).collect());
             }
-            Item::Struct { methods: meths, .. } => {
+            Item::Struct { name, methods: meths, .. } => {
                 for m in meths {
                     methods.insert(m.name.clone(), m.params.iter().map(should_ref_param).collect());
+                    if m.name == "new" {
+                        structs_with_new.insert(name.clone());
+                    }
                 }
             }
             _ => {}
         }
     }
-    SigTable { fns, methods }
+    SigTable { fns, methods, structs_with_new }
 }
 
 fn needs_ref(expr: &Expr) -> bool {
-    matches!(expr, Expr::Ident { .. } | Expr::FieldAccess { .. } | Expr::Index { .. })
+    match expr {
+        Expr::Ident { .. } | Expr::FieldAccess { .. } | Expr::Index { .. } => true,
+        // Interpolated strings emit as format!(...) → String, needs & to coerce to &str
+        Expr::Str(s) => !extract_str_args(s).1.is_empty(),
+        _ => false,
+    }
 }
 
 /// Stdlib methods whose arguments take &T.
@@ -50,6 +60,7 @@ const STDLIB_REF_METHODS: &[&str] = &[
     "find", "rfind", "split_once", "strip_prefix", "strip_suffix",
     "trim_matches", "trim_start_matches", "trim_end_matches",
     "get", "get_mut", "remove", "binary_search", "entry",
+    "push_str",
 ];
 
 // ── Emitter ───────────────────────────────────────────────────────────────────
@@ -329,7 +340,8 @@ impl Emitter {
         if let Expr::Ident { name, .. } = func {
             if name.starts_with(|c: char| c.is_uppercase()) && !ENUM_VARIANTS.contains(&name.as_str()) {
                 if args.is_empty() {
-                    return format!("{name}::default()");
+                    let ctor = if self.sig.structs_with_new.contains(name.as_str()) { "new" } else { "default" };
+                    return format!("{name}::{ctor}()");
                 }
                 let a = self.emit_args(args, self.sig.fns.get(name.as_str()).map(Vec::as_slice));
                 return format!("{name}::new({a})");

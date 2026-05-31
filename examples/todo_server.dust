@@ -41,7 +41,7 @@ struct Store
       out.push_str("{\"id\":")
       out.push_str(&todo.id.to_string())
       out.push_str(",\"title\":\"")
-      out.push_str(&todo.title)
+      out.push_str(todo.title)
       out.push_str("\",\"done\":")
       out.push_str(&todo.done.to_string())
       out.push_str("}")
@@ -60,31 +60,31 @@ fn respond_html(keep stream: TcpStream, body: str)
   respond(stream, "200 OK", "text/html; charset=utf-8", body)
 
 fn parse_method(line: str) -> str
-  let parts: Vec<&str> = line.split(' ').collect()
+  let parts: Vec<&str> = line.split(c' ').collect()
   if parts.len() > 0
     then parts[0].to_string()
     else "GET".to_string()
 
 fn parse_path(line: str) -> str
-  let parts: Vec<&str> = line.split(' ').collect()
+  let parts: Vec<&str> = line.split(c' ').collect()
   if parts.len() > 1
     then parts[1].to_string()
     else "/".to_string()
 
 fn parse_id(path: str) -> Option<usize>
-  let trimmed = path.trim_start_matches('/')
-  let parts: Vec<&str> = trimmed.split('/').collect()
+  let trimmed = path.trim_start_matches(c'/')
+  let parts: Vec<&str> = trimmed.split(c'/').collect()
   if parts.len() == 2
     then parts[1].parse::<usize>().ok()
     else None
 
 fn extract_title(body: str) -> str
   let s = body.trim()
-  let s = s.trim_start_matches('{')
-  let s = s.trim_end_matches('}')
-  let parts: Vec<&str> = s.splitn(2, ':').collect()
+  let s = s.trim_start_matches(c'{')
+  let s = s.trim_end_matches(c'}')
+  let parts: Vec<&str> = s.splitn(2, c':').collect()
   if parts.len() == 2
-    then parts[1].trim().trim_matches('"').to_string()
+    then parts[1].trim().trim_matches(c'"').to_string()
     else "untitled".to_string()
 
 fn handle(keep stream: TcpStream, keep store: Arc<Mutex<Store>>)
@@ -96,8 +96,8 @@ fn handle(keep stream: TcpStream, keep store: Arc<Mutex<Store>>)
     Some(Ok(l)) -> l
     _ -> return
 
-  let method = parse_method(&first_line)
-  let path = parse_path(&first_line)
+  let method = parse_method(first_line)
+  let path = parse_path(first_line)
 
   mut content_length: usize = 0
   for line in lines_iter.by_ref()
@@ -114,23 +114,23 @@ fn handle(keep stream: TcpStream, keep store: Arc<Mutex<Store>>)
   elif method == "GET" && path == "/todos"
     mut s = store.lock().unwrap!
     let json = s.to_json()
-    respond_json(stream, "200 OK", &json)
+    respond_json(stream, "200 OK", json)
   elif method == "POST" && path == "/todos"
     mut body = String::new()
     if content_length > 0
       mut buf = vec![0u8; content_length]
       stream.read_exact(&mut buf).unwrap!
       body = String::from_utf8_lossy(&buf).to_string()
-    let title = extract_title(&body)
+    let title = extract_title(body)
     mut s = store.lock().unwrap!
     let id = s.add(title)
-    respond_json(stream, "201 Created", &"{\"id\":{id}}")
+    respond_json(stream, "201 Created", "{\"id\":{id}}")
   elif method == "DELETE"
-    match parse_id(&path)
+    match parse_id(path)
       Some(id) ->
         mut s = store.lock().unwrap!
         if s.remove(id)
-          then respond_json(stream, "200 OK", &"{\"deleted\":{id}}")
+          then respond_json(stream, "200 OK", "{\"deleted\":{id}}")
           else respond_json(stream, "404 Not Found", "{\"error\":\"not found\"}")
       None ->
         respond_json(stream, "400 Bad Request", "{\"error\":\"bad id\"}")

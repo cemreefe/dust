@@ -53,11 +53,11 @@ Consistently **~20–45% less code** across real programs, measured by lines, ch
 
 | Program | Lines | Chars | Tokens |
 |---------|-------|-------|--------|
-| Stack struct | −45% | −38% | −33% |
-| RPN calculator | −31% | −27% | −20% |
-| Word frequency | −37% | −27% | −26% |
-| Caesar cipher | −18% | −14% | −8% |
-| This comparison script | −18% | −12% | −11% |
+| [Stack struct](examples/stack.dust) | −45% | −38% | −33% |
+| [RPN calculator](examples/rpn.dust) | −31% | −27% | −20% |
+| [Word frequency](examples/wordfreq.dust) | −37% | −27% | −26% |
+| [Caesar cipher](examples/caesar.dust) | −18% | −14% | −8% |
+| [This comparison script](examples/compare.dust) | −18% | −12% | −11% |
 
 ## Syntax
 

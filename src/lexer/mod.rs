@@ -49,6 +49,26 @@ impl Lexer {
         }
     }
 
+    fn lex_char(&mut self, line: usize, col: usize) -> Result<Token> {
+        let ch = match self.advance() {
+            None => return Err(DustError::new("unterminated char literal", line, col)),
+            Some('\\') => match self.advance() {
+                Some('n')  => '\n',
+                Some('r')  => '\r',
+                Some('t')  => '\t',
+                Some('\'') => '\'',
+                Some('\\') => '\\',
+                Some('0')  => '\0',
+                _ => return Err(DustError::new("invalid char escape", line, col)),
+            },
+            Some(c) => c,
+        };
+        match self.advance() {
+            Some('\'') => Ok(Token::Char(ch)),
+            _ => Err(DustError::new("unterminated char literal", line, col)),
+        }
+    }
+
     fn lex_string(&mut self, line: usize, col: usize) -> Result<Token> {
         let mut s = String::new();
         loop {
@@ -57,9 +77,11 @@ impl Lexer {
                 Some('"') => break,
                 Some('\\') => match self.advance() {
                     Some('n')  => s.push('\n'),
+                    Some('r')  => s.push('\r'),
                     Some('t')  => s.push('\t'),
                     Some('"')  => s.push('"'),
                     Some('\\') => s.push('\\'),
+                    Some('0')  => s.push('\0'),
                     _ => return Err(DustError::new("invalid escape sequence", self.line, self.col)),
                 },
                 Some(c) => s.push(c),
@@ -134,6 +156,10 @@ impl Lexer {
                     self.advance();
                     tokens.push(Spanned::new(self.lex_string(line, col)?, line, col));
                 }
+                Some('\'') => {
+                    self.advance();
+                    tokens.push(Spanned::new(self.lex_char(line, col)?, line, col));
+                }
                 Some(c) if c.is_ascii_digit() => {
                     self.advance();
                     tokens.push(Spanned::new(self.lex_number(c), line, col));
@@ -153,9 +179,11 @@ impl Lexer {
                 Some(_) => {
                     let c = self.advance().unwrap();
                     let tok = match c {
-                        '+' => Token::Plus,
-                        '*' => Token::Star,
-                        '/' => Token::Slash,
+                        '+' => if self.peek() == Some('+') { self.advance(); Token::PlusPlus }
+                               else if self.peek() == Some('=') { self.advance(); Token::PlusEq }
+                               else { Token::Plus },
+                        '*' => if self.peek() == Some('=') { self.advance(); Token::StarEq } else { Token::Star },
+                        '/' => if self.peek() == Some('=') { self.advance(); Token::SlashEq } else { Token::Slash },
                         '%' => Token::Percent,
                         '(' => Token::LParen,
                         ')' => Token::RParen,
@@ -166,14 +194,23 @@ impl Lexer {
                         ',' => Token::Comma,
                         '?' => Token::Question,
                         '.' => Token::Dot,
-                        '-' => if self.peek() == Some('>') { self.advance(); Token::Arrow } else { Token::Minus },
+                        '-' => if self.peek() == Some('>') { self.advance(); Token::Arrow }
+                               else if self.peek() == Some('-') { self.advance(); Token::MinusMinus }
+                               else if self.peek() == Some('=') { self.advance(); Token::MinusEq }
+                               else { Token::Minus },
                         '=' => if self.peek() == Some('=') { self.advance(); Token::EqEq } else { Token::Eq },
                         '!' => if self.peek() == Some('=') { self.advance(); Token::BangEq } else { Token::Bang },
                         '<' => if self.peek() == Some('=') { self.advance(); Token::LtEq } else { Token::Lt },
                         '>' => if self.peek() == Some('=') { self.advance(); Token::GtEq } else { Token::Gt },
                         ':' => if self.peek() == Some(':') { self.advance(); Token::ColonColon } else { Token::Colon },
-                        '&' => if self.peek() == Some('&') { self.advance(); Token::AndAnd } else { Token::Ampersand },
-                        '|' => if self.peek() == Some('|') { self.advance(); Token::PipePipe } else { Token::Pipe },
+                        '&' => if self.peek() == Some('&') {
+                                   self.advance();
+                                   if self.peek() == Some('=') { self.advance(); Token::AndAndEq } else { Token::AndAnd }
+                               } else { Token::Ampersand },
+                        '|' => if self.peek() == Some('|') {
+                                   self.advance();
+                                   if self.peek() == Some('=') { self.advance(); Token::PipePipeEq } else { Token::PipePipe }
+                               } else { Token::Pipe },
                         c => return Err(DustError::new(format!("unexpected character '{c}'"), line, col)),
                     };
                     tokens.push(Spanned::new(tok, line, col));

@@ -122,9 +122,11 @@ fn collect_assignments(stmts: &[Stmt], ctx: &mut Ctx) -> Result<()> {
             Stmt::Let { name, .. }   => ctx.declare(name, BindKind::Let),
             Stmt::Const { name, .. } => ctx.declare(name, BindKind::Const),
             Stmt::Mut { name, .. }   => ctx.declare(name, BindKind::Mut),
-            Stmt::Assign { target: Expr::Ident { name, line, col }, .. } => {
+            Stmt::Assign { target: Expr::Ident { name, line, col }, .. }
+            | Stmt::CompoundAssign { target: Expr::Ident { name, line, col }, .. } => {
                 ctx.mark_assigned(name, *line, *col)?;
             }
+            Stmt::For { var, .. } => ctx.declare(var, BindKind::Let),
             _ => {}
         }
     }
@@ -135,12 +137,14 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut Ctx) -> Result<()> {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Mut { value, .. } => {
             analyze_expr(value, ctx)?;
-            maybe_insert_clone(value);
+            // Auto-clone disabled: too aggressive for non-Clone types (e.g. TcpStream).
+            // Users clone explicitly where needed.
         }
         Stmt::Const { value, .. } => {
             analyze_expr(value, ctx)?;
         }
-        Stmt::Assign { target, value, line, col } => {
+        Stmt::Assign { target, value, line, col }
+        | Stmt::CompoundAssign { target, value, line, col, .. } => {
             if let Expr::Ident { name, .. } = target {
                 ctx.mark_assigned(name, *line, *col)?;
             }
@@ -155,6 +159,12 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut Ctx) -> Result<()> {
             let mut child2 = ctx.child();
             analyze_block(catch_block, &mut child2)?;
         }
+        Stmt::For { iter, body, .. } => {
+            analyze_expr(iter, ctx)?;
+            let mut child = ctx.child();
+            analyze_block(body, &mut child)?;
+        }
+        Stmt::Break(..) | Stmt::Continue(..) => {}
         Stmt::Use { .. } => {}
     }
     Ok(())
@@ -189,6 +199,11 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut Ctx) -> Result<()> {
             analyze_expr(inner, ctx)?;
         }
         Expr::Closure { body, .. } => analyze_expr(body, ctx)?,
+        Expr::Turbofish { inner, .. } => analyze_expr(inner, ctx)?,
+        Expr::Index { obj, idx, .. } => {
+            analyze_expr(obj, ctx)?;
+            analyze_expr(idx, ctx)?;
+        }
         _ => {}
     }
     Ok(())

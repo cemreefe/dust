@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Dust Todo</title>
+  <style>
+    body { font-family: sans-serif; max-width: 600px; margin: 40px auto; padding: 0 16px; }
+    h1 { color: #333; }
+    input { padding: 8px; width: 300px; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding: 8px 16px; margin-left: 8px; cursor: pointer; border: none; border-radius: 4px; background: #4a90e2; color: #fff; }
+    button.del { background: #e25454; margin-left: 12px; padding: 4px 10px; font-size: 12px; }
+    ul { list-style: none; padding: 0; }
+    li { display: flex; align-items: center; padding: 10px; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h1>Dust Todo</h1>
+  <div>
+    <input id="inp" placeholder="What needs doing?" />
+    <button onclick="add()">Add</button>
+  </div>
+  <ul id="list"></ul>
+  <script>
+    function load() {
+      fetch('/todos').then(function(r) { return r.json(); }).then(function(todos) {
+        var ul = document.getElementById('list');
+        ul.innerHTML = '';
+        todos.forEach(function(t) {
+          var li = document.createElement('li');
+          var span = document.createElement('span');
+          span.textContent = t.title;
+          var btn = document.createElement('button');
+          btn.className = 'del';
+          btn.textContent = 'delete';
+          btn.onclick = (function(id) { return function() { del(id); }; })(t.id);
+          li.appendChild(span);
+          li.appendChild(btn);
+          ul.appendChild(li);
+        });
+      });
+    }
+    function add() {
+      var inp = document.getElementById('inp');
+      var title = inp.value.trim();
+      if (!title) return;
+      fetch('/todos', { method: 'POST', body: '{"title":"' + title + '"}' }).then(function() {
+        inp.value = '';
+        load();
+      });
+    }
+    function del(id) {
+      fetch('/todos/' + id, { method: 'DELETE' }).then(load);
+    }
+    load();
+  </script>
+</body>
+</html>

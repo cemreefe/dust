@@ -22,6 +22,7 @@ impl Ty {
 #[derive(Debug, Clone)]
 pub struct Param {
     pub keep: bool,        // `keep name: T` → take ownership
+    pub mutable: bool,     // `keep mut name: T` → mutable owned binding
     pub name: String,
     pub ty: Ty,
     pub line: usize,
@@ -39,6 +40,7 @@ pub enum Expr {
     Int(i64),
     Float(f64),
     Str(String),    // raw string literal (may contain {name} interpolation)
+    Char(char),
     Bool(bool),
     Ident { name: String, line: usize, col: usize },
 
@@ -117,6 +119,12 @@ pub enum Expr {
 
     // Inline macro passthrough: the entire "println!(...)" string
     Macro { raw: String, line: usize, col: usize },
+
+    // expr::<Type, ...> — turbofish
+    Turbofish { inner: Box<Expr>, type_args: String, line: usize, col: usize },
+
+    // expr[idx]
+    Index { obj: Box<Expr>, idx: Box<Expr>, line: usize, col: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -131,6 +139,8 @@ pub enum BinOp {
 pub enum UnaryOp {
     Neg,
     Not,
+    Ref,    // &expr
+    RefMut, // &mut expr
 }
 
 #[derive(Debug, Clone)]
@@ -143,6 +153,9 @@ pub enum Stmt {
     // name = expr  (reassignment, not declaration)
     Assign { target: Expr, value: Expr, line: usize, col: usize },
 
+    // name += expr / name++ / name--
+    CompoundAssign { target: Expr, op: String, value: Expr, line: usize, col: usize },
+
     Expr(Expr),
     Return(Option<Expr>, usize, usize),
 
@@ -153,6 +166,17 @@ pub enum Stmt {
         line: usize,
         col: usize,
     },
+
+    For {
+        var: String,
+        iter: Expr,
+        body: Vec<Stmt>,
+        line: usize,
+        col: usize,
+    },
+
+    Break(usize, usize),
+    Continue(usize, usize),
 
     // use path::to::thing;  — pass through
     Use { path: String, line: usize, col: usize },

@@ -4,6 +4,7 @@ pub enum Token {
     Int(i64),
     Float(f64),
     Str(String),
+    Char(char),
     Bool(bool),
 
     // Identifier
@@ -21,6 +22,7 @@ pub enum Token {
     KwIf,
     KwThen,
     KwElse,
+    KwElif,
     KwAsync,
     KwAwait,
     KwTry,
@@ -53,6 +55,14 @@ pub enum Token {
     Star,        // *
     Slash,       // /
     Percent,     // %
+    PlusPlus,      // ++
+    MinusMinus,    // --
+    PlusEq,        // +=
+    MinusEq,       // -=
+    StarEq,        // *=
+    SlashEq,       // /=
+    AndAndEq,      // &&=
+    PipePipeEq,    // ||=
     ColonColon,  // ::
     Dot,         // .
     Comma,       // ,
@@ -92,6 +102,7 @@ impl Token {
             "if"       => Some(Token::KwIf),
             "then"     => Some(Token::KwThen),
             "else"     => Some(Token::KwElse),
+            "elif"     => Some(Token::KwElif),
             "async"    => Some(Token::KwAsync),
             "await"    => Some(Token::KwAwait),
             "try"      => Some(Token::KwTry),

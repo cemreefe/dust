@@ -122,7 +122,10 @@ fn emit_enum(name: &str, variants: &[Variant]) -> String {
 
 fn emit_param(p: &Param) -> String {
     if p.name == "self" {
-        return "self".into();
+        return if p.keep { "self".into() } else { "&mut self".into() };
+    }
+    if p.keep && p.mutable {
+        return format!("mut {}: {}", p.name, emit_ty_owned(&p.ty));
     }
     format!("{}: {}", p.name, emit_ty_owned(&p.ty))
 }
@@ -187,6 +190,15 @@ fn emit_stmt(stmt: &Stmt, is_last: bool) -> String {
         Stmt::Assign { target, value, .. } => {
             format!("{} = {};", emit_expr(target), emit_expr(value))
         }
+        Stmt::CompoundAssign { target, op, value, .. } => {
+            // &&= and ||= desugar to x = x op y (not valid Rust operators)
+            if op == "&&" || op == "||" {
+                let t = emit_expr(target);
+                format!("{t} = {t} {op} {};", emit_expr(value))
+            } else {
+                format!("{} {}= {};", emit_expr(target), op, emit_expr(value))
+            }
+        }
         Stmt::Expr(e) => {
             let s = emit_expr(e);
             if is_last {
@@ -205,6 +217,13 @@ fn emit_stmt(stmt: &Stmt, is_last: bool) -> String {
                 "match (|| -> Result<_, _> {{\n{try_stmts}}})() {{\n    Ok(_) => {{}},\n    Err({catch_var}) => {{\n{catch_stmts}    }},\n}}"
             )
         }
+        Stmt::For { var, iter, body, .. } => {
+            let iter_s = emit_expr(iter);
+            let body_s = emit_block(body);
+            format!("for {var} in {iter_s} {{\n{body_s}}}")
+        }
+        Stmt::Break(..)    => "break".into(),
+        Stmt::Continue(..) => "continue".into(),
         Stmt::Use { path, .. } => format!("use {path};"),
     }
 }
@@ -213,6 +232,7 @@ fn emit_stmt(stmt: &Stmt, is_last: bool) -> String {
 
 fn emit_expr(expr: &Expr) -> String {
     match expr {
+        Expr::Char(c)  => format!("'{}'", c.escape_default()),
         Expr::Int(n)   => n.to_string(),
         Expr::Float(f) => {
             let s = format!("{f}");
@@ -221,12 +241,12 @@ fn emit_expr(expr: &Expr) -> String {
         Expr::Bool(b)  => b.to_string(),
 
         Expr::Str(s) => {
-            // If string contains {ident} interpolation, emit format!()
-            // Otherwise emit a raw string literal — Rust coerces &str / String as needed
-            if s.contains('{') {
-                format!("format!(\"{s}\")")
+            // Check if the string has any {ident} interpolation
+            if has_interpolation(s) {
+                let fmt = prepare_format_str(s);
+                format!("format!(\"{fmt}\")")
             } else {
-                format!("\"{s}\"")
+                format!("\"{}\"", escape_str(s))
             }
         }
 
@@ -250,8 +270,12 @@ fn emit_expr(expr: &Expr) -> String {
         }
 
         Expr::UnaryOp { op, expr, .. } => {
-            let op_str = match op { UnaryOp::Neg => "-", UnaryOp::Not => "!" };
-            format!("{op_str}{}", emit_expr(expr))
+            match op {
+                UnaryOp::Neg    => format!("-{}", emit_expr(expr)),
+                UnaryOp::Not    => format!("!{}", emit_expr(expr)),
+                UnaryOp::Ref    => format!("&{}", emit_expr(expr)),
+                UnaryOp::RefMut => format!("&mut {}", emit_expr(expr)),
+            }
         }
 
         Expr::Call { func, args, .. } => {
@@ -307,6 +331,14 @@ fn emit_expr(expr: &Expr) -> String {
         Expr::Try(e, ..)    => format!("{}?", emit_expr(e)),
         Expr::Unwrap(e, ..) => format!("{}.unwrap()", emit_expr(e)),
         Expr::Await(e, ..)  => format!("{}.await", emit_expr(e)),
+
+        Expr::Turbofish { inner, type_args, .. } => {
+            format!("{}::<{}>", emit_expr(inner), type_args)
+        }
+
+        Expr::Index { obj, idx, .. } => {
+            format!("{}[{}]", emit_expr(obj), emit_expr(idx))
+        }
     }
 }
 
@@ -320,10 +352,83 @@ fn emit_expr_owned(expr: &Expr, ty: Option<&Ty>) -> String {
     };
     match expr {
         Expr::Str(s) if wants_string && !s.contains('{') => {
-            format!("\"{s}\".to_string()")
+            format!("\"{}\".to_string()", escape_str(s))
         }
         _ => emit_expr(expr),
     }
+}
+
+fn escape_str(s: &str) -> String {
+    let mut out = String::new();
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"'  => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c    => out.push(c),
+        }
+    }
+    out
+}
+
+/// True if the string contains at least one `{ident}` format placeholder
+fn has_interpolation(s: &str) -> bool {
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            let mut ident = String::new();
+            let mut closed = false;
+            for c2 in chars.by_ref() {
+                if c2 == '}' { closed = true; break; }
+                if c2.is_alphanumeric() || c2 == '_' { ident.push(c2); }
+                else { break; }
+            }
+            if closed && !ident.is_empty() { return true; }
+        }
+    }
+    false
+}
+
+/// Prepare a format string: escape non-placeholder `{` as `{{` and `}` as `}}`,
+/// while leaving `{ident}` placeholders untouched. Also escapes quotes etc.
+fn prepare_format_str(s: &str) -> String {
+    let mut out = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        match c {
+            '{' => {
+                // Try to scan {ident}
+                let mut j = i + 1;
+                let mut ident = String::new();
+                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
+                    ident.push(chars[j]);
+                    j += 1;
+                }
+                if !ident.is_empty() && j < chars.len() && chars[j] == '}' {
+                    // It's a placeholder — emit as-is
+                    out.push('{');
+                    out.push_str(&ident);
+                    out.push('}');
+                    i = j + 1;
+                } else {
+                    out.push_str("{{");
+                    i += 1;
+                }
+            }
+            '}' => { out.push_str("}}"); i += 1; }
+            '\\' => { out.push_str("\\\\"); i += 1; }
+            '"'  => { out.push_str("\\\""); i += 1; }
+            '\n' => { out.push_str("\\n");  i += 1; }
+            '\r' => { out.push_str("\\r");  i += 1; }
+            '\t' => { out.push_str("\\t");  i += 1; }
+            c    => { out.push(c); i += 1; }
+        }
+    }
+    out
 }
 
 fn emit_expr_as_block(expr: &Expr) -> String {

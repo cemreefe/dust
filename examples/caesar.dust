@@ -2,10 +2,10 @@ use std::io
 use std::io::BufRead
 
 fn shift_char(c: char, n: u8) -> char
-  if c >= 'a' && c <= 'z'
+  if c >= c'a' && c <= c'z'
     let shifted = (c as u8 - b'a' + n) % 26 + b'a'
     shifted as char
-  elif c >= 'A' && c <= 'Z'
+  elif c >= c'A' && c <= c'Z'
     let shifted = (c as u8 - b'A' + n) % 26 + b'A'
     shifted as char
   else

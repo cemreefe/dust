@@ -416,6 +416,43 @@ fn emit_expr_bare_owned(expr: &Expr, ty: Option<&Ty>) -> String {
     }
 }
 
+/// Convert single-quoted Dust string literals inside expression text to double-quoted Rust strings.
+/// Leaves c'x' and b'x' char/byte literals alone.
+fn single_to_double_quotes(expr: &str) -> String {
+    let chars: Vec<char> = expr.chars().collect();
+    let mut out = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        // c'x' or b'x' — keep as-is
+        if (chars[i] == 'c' || chars[i] == 'b') && chars.get(i + 1) == Some(&'\'') {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        if chars[i] == '\'' {
+            // Replace surrounding ' with "
+            out.push('"');
+            i += 1;
+            while i < chars.len() && chars[i] != '\'' {
+                if chars[i] == '\\' && i + 1 < chars.len() {
+                    out.push(chars[i]);
+                    out.push(chars[i + 1]);
+                    i += 2;
+                } else {
+                    out.push(chars[i]);
+                    i += 1;
+                }
+            }
+            out.push('"');
+            i += 1; // closing '
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Scan a string for `{expr}` interpolations.
 /// Returns (format_str_with_positional_placeholders, vec_of_expr_strings).
 /// Handles nested braces, escapes special chars for Rust string literals.
@@ -457,7 +494,7 @@ fn extract_str_args(s: &str) -> (String, Vec<String>) {
                             fmt.push('}');
                         } else {
                             fmt.push_str("{}");
-                            args.push(expr);
+                            args.push(single_to_double_quotes(&expr));
                         }
                         i = j + 1;
                     } else {

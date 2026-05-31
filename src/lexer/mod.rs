@@ -69,6 +69,30 @@ impl Lexer {
         }
     }
 
+    fn lex_single_quoted_str(&mut self, line: usize, col: usize) -> Result<Token> {
+        let mut s = String::new();
+        loop {
+            match self.advance() {
+                None => return Err(DustError::new("unterminated string literal", line, col)),
+                Some('\'') => break,
+                Some('\\') => {
+                    let esc = match self.advance() {
+                        Some('n')  => '\n',
+                        Some('r')  => '\r',
+                        Some('t')  => '\t',
+                        Some('\'') => '\'',
+                        Some('\\') => '\\',
+                        Some('0')  => '\0',
+                        _ => return Err(DustError::new("invalid escape", line, col)),
+                    };
+                    s.push(esc);
+                }
+                Some(c) => s.push(c),
+            }
+        }
+        Ok(Token::Str(s))
+    }
+
     fn lex_string(&mut self, line: usize, col: usize) -> Result<Token> {
         let mut s = String::new();
         loop {
@@ -158,7 +182,7 @@ impl Lexer {
                 }
                 Some('\'') => {
                     self.advance();
-                    tokens.push(Spanned::new(self.lex_char(line, col)?, line, col));
+                    tokens.push(Spanned::new(self.lex_single_quoted_str(line, col)?, line, col));
                 }
                 Some(c) if c.is_ascii_digit() => {
                     self.advance();
@@ -166,13 +190,18 @@ impl Lexer {
                 }
                 Some(c) if c.is_alphabetic() || c == '_' => {
                     self.advance();
-                    // b'x' byte literal
-                    if c == 'b' && self.peek() == Some('\'') {
+                    // b'x' byte literal, c'x' char literal
+                    if (c == 'b' || c == 'c') && self.peek() == Some('\'') {
                         self.advance(); // consume '
-                        if let Token::Char(ch) = self.lex_char(line, col)? {
-                            tokens.push(Spanned::new(Token::Int(ch as i64), line, col));
-                            continue;
+                        let tok = self.lex_char(line, col)?;
+                        if c == 'b' {
+                            if let Token::Char(ch) = tok {
+                                tokens.push(Spanned::new(Token::Int(ch as i64), line, col));
+                            }
+                        } else {
+                            tokens.push(Spanned::new(tok, line, col));
                         }
+                        continue;
                     }
                     let tok = self.lex_ident(c);
                     // Check for macro: ident immediately followed by !

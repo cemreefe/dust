@@ -2,5 +2,4 @@ fn greet(name: str) -> str
   "Hello, {name}!"
 
 fn main()
-  let name = "Alice"
-  println!("{greet(&name)}")
+  println!("{greet('Alice')}")

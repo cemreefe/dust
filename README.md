@@ -64,12 +64,12 @@ Consistently **~20–45% less code** across real programs, measured by lines, ch
 ### Variables
 
 ```dust
-let x = compute()   # inferred mutability — transpiler decides
+let x = compute()   # immutable by default
 mut x = compute()   # explicitly mutable
-const X: i32 = 1    # explicitly immutable, value known at compile time
+const X: i32 = 1    # compile-time constant, requires type annotation
 ```
 
-`let` is the default — use it when you don't care about mutability. `mut` opts into mutability explicitly. `const` requires a type annotation and a compile-time value.
+`let` is immutable and works for any value including runtime results. `mut` opts into mutability. `const` is for compile-time constants only.
 
 ### Functions
 

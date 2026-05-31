@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" width="160" alt="Dust logo">
+</p>
+
 # Dust
 
 A programming language that compiles to Rust. Python-influenced syntax, indentation-based blocks, smart ownership defaults. Ugly-but-correct output.

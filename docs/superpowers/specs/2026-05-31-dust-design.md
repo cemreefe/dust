@@ -152,11 +152,12 @@ fn add(a: i32, b: i32) -> i32
 ## Closures
 
 ```dust
-let double = (x: i32) -> x * 2
-let doubled = nums.iter().map((x) -> x * 2)
+let double = x: i32 -> x * 2
+let add = x: i32, y: i32 -> x + y
+let doubled = nums.iter().map(x -> x * 2)
 ```
 
-Emits `|x: i32| x * 2` in Rust. Arrow function syntax, same as JS.
+Emits `|x: i32| x * 2` in Rust. No parentheses needed for any number of args — `->` unambiguously separates args from body.
 
 ---
 
@@ -192,9 +193,11 @@ impl Animal for Dog {
         "woof"
     }
 }
+
+impl Swimmer for Dog {}
 ```
 
-The transpiler routes methods to the correct `impl` block based on which trait requires them.
+For every trait listed in `is`, the transpiler emits an `impl Trait for Struct` block containing any matching methods from the struct body. Methods not required by any listed trait go into the plain `impl Struct` block. rustc validates that all required trait methods are present — the transpiler does not duplicate this check.
 
 ### Name collisions across traits
 
@@ -202,9 +205,9 @@ When two traits require a method with the same name, use qualified syntax:
 
 ```dust
 struct Foo is Bar, Baz
-  fn Bar::shared(self) -> str
+  fn Bar.shared(self) -> str
     "from bar"
-  fn Baz::shared(self) -> str
+  fn Baz.shared(self) -> str
     "from baz"
 ```
 
@@ -250,9 +253,9 @@ enum Shape {
 
 ```dust
 match shape
-  Circle(r)  => pi * r * r
-  Rect(w, h) => w * h
-  Empty      => 0.0
+  Circle(r)  -> pi * r * r
+  Rect(w, h) -> w * h
+  Empty      -> 0.0
 ```
 
 Emits standard Rust `match` block.

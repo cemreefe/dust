@@ -1,0 +1,6 @@
+fn greet(name: str) -> str
+  "Hello, {name}!"
+
+fn main()
+  let msg = greet("Alice")
+  println!("{}", msg)

@@ -40,8 +40,9 @@ cargo install --path .
 ## Usage
 
 ```sh
-dust run  hello.dust        # compile and run
-dust build hello.dust       # emit hello.rs
+dust run     hello.dust        # compile and run
+dust compile hello.dust        # compile to binary
+dust build   hello.dust        # emit hello.rs
 ```
 
 ## Syntax

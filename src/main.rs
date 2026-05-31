@@ -43,6 +43,26 @@ fn main() {
             });
             eprintln!("Emitted {}", out.display());
         }
+        "compile" => {
+            let path = args.get(2).map(Path::new).unwrap_or_else(|| {
+                eprintln!("Usage: dust compile <file.dust>"); std::process::exit(1);
+            });
+            let rust_src = compile(path);
+            let rs_path = path.with_extension("rs");
+            std::fs::write(&rs_path, &rust_src).unwrap_or_else(|e| {
+                eprintln!("error: {e}"); std::process::exit(1);
+            });
+            let bin_path = path.with_extension("");
+            let status = std::process::Command::new("rustc")
+                .arg(&rs_path)
+                .arg("-o").arg(&bin_path)
+                .arg("--edition=2021")
+                .stderr(std::process::Stdio::inherit())
+                .status()
+                .expect("rustc not found");
+            if !status.success() { std::process::exit(1); }
+            eprintln!("Compiled {}", bin_path.display());
+        }
         "run" => {
             let path = args.get(2).map(Path::new).unwrap_or_else(|| {
                 eprintln!("Usage: dust run <file.dust> [args...]"); std::process::exit(1);
@@ -75,8 +95,9 @@ fn main() {
         }
         _ => {
             eprintln!("Usage:");
-            eprintln!("  dust build <file.dust>        emit .rs file");
-            eprintln!("  dust run   <file.dust> [args] compile and run");
+            eprintln!("  dust build   <file.dust>        emit .rs file");
+            eprintln!("  dust compile <file.dust>        compile to binary");
+            eprintln!("  dust run     <file.dust> [args] compile and run");
             std::process::exit(1);
         }
     }

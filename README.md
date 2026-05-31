@@ -78,11 +78,12 @@ fn add(a: i32, b: i32) -> i32
   a + b
 ```
 
-Auto-borrows string params (`str` → `&str`). Use `keep` to take ownership:
+All non-primitive params are auto-borrowed. Use `keep` to take ownership, `mut` for a mutable borrow:
 
 ```dust
-fn consume(keep name: str)     # name: String  — owns the value
-fn read(name: str)             # name: &str    — borrows (default)
+fn consume(keep name: str)     # name: String      — owns the value
+fn read(name: str)             # name: &str        — borrows (default)
+fn update(mut f: Formatter)    # f: &mut Formatter — mutable borrow
 ```
 
 ### Structs & Methods
@@ -201,6 +202,7 @@ let y = pair.1
 ```dust
 fn consume(keep buf: Vec<u8>)   # takes ownership
 fn read(data: str)              # borrows (&str, default)
+fn update(mut f: Formatter)     # mutable borrow (&mut Formatter)
 ```
 
 ### Enums
@@ -218,7 +220,7 @@ enum Shape
 struct Dog
   is Display
 
-  fn Display.fmt(self, f: &mut Formatter) -> Result
+  fn Display.fmt(self, mut f: Formatter) -> Result
     write!(f, "Dog")
 ```
 

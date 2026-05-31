@@ -50,10 +50,17 @@ fn apply_auto_borrow_params(params: &mut Vec<Param>, _ret_ty: &mut Option<Ty>) {
     // Return types stay owned (String not &str) — function gives ownership back.
 }
 
+const PRIMITIVES: &[&str] = &[
+    "i8","i16","i32","i64","i128","isize",
+    "u8","u16","u32","u64","u128","usize",
+    "f32","f64","bool","char",
+];
+
 fn borrow_ty(ty: &Ty) -> Ty {
     match ty {
         Ty::Simple(s) if s == "str" => Ty::Ref(Box::new(Ty::Simple("str".into()))),
-        Ty::Generic(name, _) => Ty::Ref(Box::new(ty.clone())),
+        Ty::Generic(..) => Ty::Ref(Box::new(ty.clone())),
+        Ty::Simple(s) if !PRIMITIVES.contains(&s.as_str()) => Ty::Ref(Box::new(ty.clone())),
         _ => ty.clone(),
     }
 }

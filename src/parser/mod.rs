@@ -249,7 +249,7 @@ impl<'a> Parser<'a> {
     fn parse_param(&mut self) -> Result<Param> {
         let line = self.line(); let col = self.col();
         let keep = self.eat(&Token::KwKeep);
-        let mutable = keep && self.eat(&Token::KwMut);
+        let mutable = self.eat(&Token::KwMut);
         let name = if matches!(self.peek(), Token::KwSelf) {
             self.advance(); "self".to_string()
         } else {

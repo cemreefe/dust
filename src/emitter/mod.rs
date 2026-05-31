@@ -482,6 +482,14 @@ fn emit_param(p: &Param) -> String {
     if p.keep && p.mutable {
         return format!("mut {}: {}", p.name, emit_ty_owned(&p.ty));
     }
+    if !p.keep && p.mutable {
+        // mutable borrow: Ref(T) → &mut T
+        let inner = match &p.ty {
+            Ty::Ref(inner) => emit_ty_ref(inner),
+            other => emit_ty_owned(other),
+        };
+        return format!("{}: &mut {}", p.name, inner);
+    }
     format!("{}: {}", p.name, emit_ty_owned(&p.ty))
 }
 

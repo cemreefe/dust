@@ -18,4 +18,4 @@ fn main()
   let stdin = io::stdin()
   for line in stdin.lock().lines()
     let line = line.unwrap!
-    println!("{}", caesar(&line, 13))
+    println!("{caesar(line, 13)}")

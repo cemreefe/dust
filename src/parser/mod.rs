@@ -9,6 +9,12 @@ pub fn parse(tokens: &[Spanned<Token>]) -> Result<Vec<Item>> {
     p.parse_program()
 }
 
+pub fn parse_expr_str(src: &str) -> Option<Expr> {
+    let tokens = crate::lexer::lex(src).ok()?;
+    let mut p = Parser::new(&tokens);
+    p.parse_expr().ok()
+}
+
 struct Parser<'a> {
     tokens: &'a [Spanned<Token>],
     pos: usize,

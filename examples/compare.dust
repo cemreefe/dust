@@ -9,7 +9,7 @@ struct Stats
     let content = fs::read_to_string(path).unwrap!
     let lines = content.lines().filter(l -> !l.trim().is_empty()).count()
     let chars = content.len()
-    let tokens = count_tokens(&content)
+    let tokens = count_tokens(content)
     Stats
       lines: lines
       chars: chars

@@ -365,27 +365,36 @@ fn extract_str_args(s: &str) -> (String, Vec<String>) {
     while i < chars.len() {
         match chars[i] {
             '{' => {
-                // Scan for matching } tracking depth
-                let start = i + 1;
-                let mut depth = 1usize;
-                let mut j = start;
-                while j < chars.len() {
-                    match chars[j] {
-                        '{' => depth += 1,
-                        '}' => { depth -= 1; if depth == 0 { break; } }
-                        _ => {}
-                    }
-                    j += 1;
-                }
-                if depth == 0 {
-                    let expr: String = chars[start..j].iter().collect();
-                    fmt.push_str("{}");
-                    args.push(expr);
-                    i = j + 1;
-                } else {
-                    // Unmatched { — escape it
+                // Only treat as interpolation if next char looks like an expression start
+                let next = chars.get(i + 1).copied().unwrap_or('\0');
+                let is_interp = next.is_alphabetic() || next == '_'
+                    || next.is_ascii_digit()
+                    || next == '-' || next == '!' || next == '(';
+                if !is_interp {
                     fmt.push_str("{{");
                     i += 1;
+                } else {
+                    // Scan for matching } tracking depth
+                    let start = i + 1;
+                    let mut depth = 1usize;
+                    let mut j = start;
+                    while j < chars.len() {
+                        match chars[j] {
+                            '{' => depth += 1,
+                            '}' => { depth -= 1; if depth == 0 { break; } }
+                            _ => {}
+                        }
+                        j += 1;
+                    }
+                    if depth == 0 {
+                        let expr: String = chars[start..j].iter().collect();
+                        fmt.push_str("{}");
+                        args.push(expr);
+                        i = j + 1;
+                    } else {
+                        fmt.push_str("{{");
+                        i += 1;
+                    }
                 }
             }
             '}' => { fmt.push_str("}}"); i += 1; }

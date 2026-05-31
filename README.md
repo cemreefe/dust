@@ -49,6 +49,14 @@ dust build   hello.dust        # emit hello.rs
 
 Consistently **~20–30% less code** across real programs, measured by lines, characters, and tokens:
 
+```mermaid
+xychart-beta
+    title "Lines of code reduction vs Rust (%)"
+    x-axis ["Stack", "RPN calc", "Word freq", "Caesar", "Compare"]
+    y-axis 0 --> 35
+    bar [30, 26, 27, 18, 18]
+```
+
 | Program | Lines | Chars | Tokens |
 |---------|-------|-------|--------|
 | Stack struct | −30% | −26% | −26% |

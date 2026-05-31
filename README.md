@@ -50,7 +50,7 @@ dust build   hello.dust        # emit hello.rs
 ### Variables
 
 ```dust
-let x = compute()   # inferred mutability — compiler decides
+let x = compute()   # inferred mutability — transpiler decides
 mut x = compute()   # explicitly mutable
 const X: i32 = 1    # explicitly immutable, value known at compile time
 ```

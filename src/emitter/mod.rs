@@ -44,6 +44,19 @@ fn emit_fn(
 fn emit_struct(name: &str, traits: &[String], fields: &[Field], methods: &[Method]) -> String {
     let mut out = String::new();
 
+    // Split methods: qualified (trait impls) vs unqualified (own methods)
+    let own_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_none()).collect();
+    let trait_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_some()).collect();
+
+    // Check for explicit fn new variants
+    let has_no_arg_new = own_methods.iter().any(|m| m.name == "new" && m.params.is_empty());
+    let has_any_new   = own_methods.iter().any(|m| m.name == "new");
+
+    // Auto-derive Default when there's no explicit no-arg fn new
+    if !has_no_arg_new && !fields.is_empty() {
+        out.push_str("#[derive(Default)]\n");
+    }
+
     // struct definition
     out.push_str(&format!("struct {name} {{\n"));
     for f in fields {
@@ -51,13 +64,8 @@ fn emit_struct(name: &str, traits: &[String], fields: &[Field], methods: &[Metho
     }
     out.push_str("}\n");
 
-    // Split methods: qualified (trait impls) vs unqualified (own methods)
-    let own_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_none()).collect();
-    let trait_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_some()).collect();
-
-    // Auto-generate fn new if struct has fields and no explicit fn new
-    let has_new = own_methods.iter().any(|m| m.name == "new");
-    let auto_new = if !has_new && !fields.is_empty() {
+    // Auto-generate fn new(fields...) if no explicit fn new at all
+    let auto_new = if !has_any_new && !fields.is_empty() {
         let params = fields.iter()
             .map(|f| format!("{}: {}", f.name, emit_ty_owned(&f.ty)))
             .collect::<Vec<_>>()
@@ -317,9 +325,14 @@ fn emit_expr(expr: &Expr) -> String {
         }
 
         Expr::Call { func, args, .. } => {
-            // Uppercase(args...) → Type::new(args...)
+            // Uppercase() → Type::default(), Uppercase(args) → Type::new(args)
+            // Exclude known enum variants that are not struct constructors
+            const ENUM_VARIANTS: &[&str] = &["Some", "None", "Ok", "Err"];
             if let Expr::Ident { name, .. } = func.as_ref() {
-                if name.starts_with(|c: char| c.is_uppercase()) {
+                if name.starts_with(|c: char| c.is_uppercase()) && !ENUM_VARIANTS.contains(&name.as_str()) {
+                    if args.is_empty() {
+                        return format!("{name}::default()");
+                    }
                     let a = args.iter().map(emit_expr).collect::<Vec<_>>().join(", ");
                     return format!("{name}::new({a})");
                 }

@@ -19,7 +19,7 @@ fn count_tokens(content: str) -> usize
   mut count: usize = 0
   mut in_word = false
   for c in content.chars()
-    if c.is_alphanumeric() || c == '_'
+    if c.is_alphanumeric() || c == c'_'
       if !in_word
         count += 1
         in_word = true

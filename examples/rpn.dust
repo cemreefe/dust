@@ -4,10 +4,6 @@ use std::io::BufRead
 struct Stack
   values: Vec<f64>
 
-  fn new() -> Stack
-    Stack
-      values: vec![]
-
   fn push(self, n: f64)
     self.values.push(n)
 

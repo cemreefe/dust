@@ -47,16 +47,16 @@ dust build   hello.dust        # emit hello.rs
 
 ## vs Rust
 
-Consistently **~20–30% less code** across real programs, measured by lines, characters, and tokens:
+Consistently **~20–45% less code** across real programs, measured by lines, characters, and tokens:
 
 ![Dust vs Rust comparison](comparison.png)
 
 | Program | Lines | Chars | Tokens |
 |---------|-------|-------|--------|
-| Stack struct | −30% | −26% | −26% |
-| RPN calculator | −26% | −24% | −17% |
-| Word frequency | −27% | −20% | −22% |
-| Caesar cipher | −18% | −14% | −10% |
+| Stack struct | −45% | −38% | −33% |
+| RPN calculator | −31% | −27% | −20% |
+| Word frequency | −37% | −27% | −26% |
+| Caesar cipher | −18% | −14% | −8% |
 | This comparison script | −18% | −12% | −11% |
 
 ## Syntax

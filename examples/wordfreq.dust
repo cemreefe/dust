@@ -5,10 +5,6 @@ use std::io::BufRead
 struct WordCounter
   counts: HashMap<String, usize>
 
-  fn new() -> WordCounter
-    WordCounter
-      counts: HashMap()
-
   fn add(self, word: str)
     *self.counts.entry(word.to_lowercase()).or_insert(0) += 1
 

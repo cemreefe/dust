@@ -153,6 +153,32 @@ fn emit_ty_ref(ty: &Ty) -> String {
     }
 }
 
+/// Emit an expression, stripping one layer of outer parens if present.
+/// Use in positions where Rust doesn't need/want them: if conditions, closure bodies, implicit returns.
+fn emit_expr_bare(expr: &Expr) -> String {
+    let s = emit_expr(expr);
+    if s.starts_with('(') && s.ends_with(')') {
+        // verify the parens are matched (not e.g. "(a) + (b)")
+        let mut depth = 0usize;
+        let chars: Vec<char> = s.chars().collect();
+        let mut matched = false;
+        for (i, &c) in chars.iter().enumerate() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 && i == chars.len() - 1 { matched = true; }
+                    else if depth == 0 { break; }
+                }
+                _ => {}
+            }
+        }
+        if matched { s[1..s.len()-1].to_string() } else { s }
+    } else {
+        s
+    }
+}
+
 // ── Statements ────────────────────────────────────────────────────────────────
 
 fn emit_block(stmts: &[Stmt]) -> String {
@@ -200,13 +226,8 @@ fn emit_stmt(stmt: &Stmt, is_last: bool) -> String {
             }
         }
         Stmt::Expr(e) => {
-            let s = emit_expr(e);
-            if is_last {
-                // Last expression in a block — implicit return, no semicolon
-                s
-            } else {
-                format!("{s};")
-            }
+            let s = if is_last { emit_expr_bare(e) } else { emit_expr(e) };
+            if is_last { s } else { format!("{s};") }
         }
         Stmt::Return(Some(e), ..) => format!("return {};", emit_expr(e)),
         Stmt::Return(None, ..)    => "return;".into(),
@@ -289,7 +310,7 @@ fn emit_expr(expr: &Expr) -> String {
         }
 
         Expr::If { cond, then_branch, else_branch, .. } => {
-            let c = emit_expr(cond);
+            let c = emit_expr_bare(cond);
             let t = emit_expr_as_block(then_branch);
             match else_branch {
                 None    => format!("if {c} {t}"),
@@ -310,7 +331,7 @@ fn emit_expr(expr: &Expr) -> String {
                 if p.ty == Ty::SelfTy { "self".into() }
                 else { format!("{}: {}", p.name, emit_ty_owned(&p.ty)) }
             }).collect::<Vec<_>>().join(", ");
-            format!("|{ps}| {}", emit_expr(body))
+            format!("|{ps}| {}", emit_expr_bare(body))
         }
 
         Expr::Block { stmts, .. } => {

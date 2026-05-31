@@ -53,10 +53,10 @@ fn respond(keep mut stream: TcpStream, status: str, content_type: str, body: str
   let response = "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {body_len}\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n{body}"
   stream.write_all(response.as_bytes()).unwrap!
 
-fn respond_json(keep mut stream: TcpStream, status: str, body: str)
+fn respond_json(keep stream: TcpStream, status: str, body: str)
   respond(stream, status, "application/json", body)
 
-fn respond_html(keep mut stream: TcpStream, body: str)
+fn respond_html(keep stream: TcpStream, body: str)
   respond(stream, "200 OK", "text/html; charset=utf-8", body)
 
 fn parse_method(line: str) -> str

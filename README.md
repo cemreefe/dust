@@ -7,7 +7,8 @@ struct Stack
   values: Vec<f64>
 
   fn new() -> Stack
-    Stack { values: vec![] }
+    Stack
+      values: vec![]
 
   fn push(self, n: f64)
     self.values.push(n)
@@ -19,7 +20,7 @@ fn main()
   mut stack = Stack::new()
   stack.push(3.0)
   stack.push(4.0)
-  println!("{}", stack.pop())
+  println!("{stack.pop()}")
 ```
 
 ## Install
@@ -44,10 +45,12 @@ dust build hello.dust       # emit hello.rs
 ### Variables
 
 ```dust
-let x = 1          # immutable
-mut x = 1          # mutable
-const x = 1        # constant
+let x = compute()   # immutable runtime binding — can't be reassigned
+mut x = compute()   # mutable runtime binding — can be reassigned
+const X: i32 = 1    # compile-time constant — value must be known at compile time
 ```
+
+`let` and `mut` are for ordinary variables. `const` is for true compile-time constants (always requires a type annotation, used rarely). When in doubt, use `let`.
 
 ### Functions
 
@@ -59,8 +62,8 @@ fn add(a: i32, b: i32) -> i32
 Auto-borrows string params (`str` → `&str`). Use `keep` to take ownership:
 
 ```dust
-fn greet(keep name: str)       # name: String
-fn greet(name: str)            # name: &str  (default)
+fn consume(keep name: str)     # name: String  — owns the value
+fn read(name: str)             # name: &str    — borrows (default)
 ```
 
 ### Structs & Methods
@@ -71,7 +74,9 @@ struct Point
   y: f64
 
   fn new(x: f64, y: f64) -> Point
-    Point { x: x, y: y }
+    Point
+      x: x
+      y: y
 
   fn distance(self) -> f64
     (self.x * self.x + self.y * self.y).sqrt()
@@ -135,15 +140,20 @@ let val = risky()?             # propagate
 
 ### String interpolation
 
+Any expression works inside `{}`:
+
 ```dust
-let msg = "Hello, {name}! You are {age} years old."
+println!("Hello, {name}!")
+println!("result: {stack.pop()}")
+println!("x squared: {x * x}")
+let msg = "uppercase: {name.to_uppercase()}"
 ```
 
 ### Ownership
 
 ```dust
-fn process(keep mut buf: Vec<u8>)   # takes ownership, mutable binding
-fn read(data: str)                  # borrows (&str)
+fn consume(keep buf: Vec<u8>)   # takes ownership
+fn read(data: str)              # borrows (&str, default)
 ```
 
 ### Enums

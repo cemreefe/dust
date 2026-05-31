@@ -23,6 +23,10 @@ impl<'a> Parser<'a> {
         self.tokens.get(self.pos).map(|s| &s.value).unwrap_or(&Token::Eof)
     }
 
+    fn peek_at(&self, offset: usize) -> &Token {
+        self.tokens.get(self.pos + offset).map(|s| &s.value).unwrap_or(&Token::Eof)
+    }
+
     fn peek_spanned(&self) -> &Spanned<Token> {
         &self.tokens[self.pos.min(self.tokens.len() - 1)]
     }
@@ -604,8 +608,31 @@ impl<'a> Parser<'a> {
 
             Token::Ident(name) => {
                 self.advance();
-                // Struct literal: Name { ... }
-                if self.eat(&Token::LBrace) {
+                // Indented struct literal:
+                //   Name
+                //     field: value
+                //     field: value
+                if matches!(self.peek(), Token::Newline)
+                    && matches!(self.peek_at(1), Token::Indent)
+                    && matches!(self.peek_at(2), Token::Ident(_))
+                    && matches!(self.peek_at(3), Token::Colon)
+                {
+                    self.advance(); // Newline
+                    self.advance(); // Indent
+                    let mut fields = Vec::new();
+                    while !matches!(self.peek(), Token::Dedent | Token::Eof) {
+                        self.skip_newlines();
+                        if matches!(self.peek(), Token::Dedent) { break; }
+                        let fname = self.expect_ident()?;
+                        self.expect(&Token::Colon)?;
+                        let fval = self.parse_expr()?;
+                        fields.push((fname, fval));
+                        self.skip_newlines();
+                    }
+                    self.expect(&Token::Dedent)?;
+                    Ok(Expr::StructLit { name, fields, line, col })
+                // Inline struct literal: Name { field: value, ... }
+                } else if self.eat(&Token::LBrace) {
                     let mut fields = Vec::new();
                     while !matches!(self.peek(), Token::RBrace | Token::Eof) {
                         let fname = self.expect_ident()?;

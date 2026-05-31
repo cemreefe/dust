@@ -240,19 +240,11 @@ fn emit_expr(expr: &Expr) -> String {
         }
         Expr::Bool(b)  => b.to_string(),
 
-        Expr::Str(s) => {
-            // Check if the string has any {ident} interpolation
-            if has_interpolation(s) {
-                let fmt = prepare_format_str(s);
-                format!("format!(\"{fmt}\")")
-            } else {
-                format!("\"{}\"", escape_str(s))
-            }
-        }
+        Expr::Str(s) => emit_str(s),
 
         Expr::Ident { name, .. } => name.clone(),
 
-        Expr::Macro { raw, .. } => raw.clone(),
+        Expr::Macro { raw, .. } => process_macro_str(raw),
 
         Expr::Path { segments, .. } => segments.join("::"),
 
@@ -342,93 +334,128 @@ fn emit_expr(expr: &Expr) -> String {
     }
 }
 
-/// Like emit_expr but in an owned binding context: string literals get .to_string()
+/// Like emit_expr but in an owned binding context: plain string literals get .to_string()
 fn emit_expr_owned(expr: &Expr, ty: Option<&Ty>) -> String {
-    // If expr is a bare string literal and we're in an owned context, add .to_string()
     let wants_string = match ty {
         Some(Ty::Simple(s)) if s == "str" => true,
-        None => true, // infer owned for let bindings without annotation
+        None => true,
         _ => false,
     };
     match expr {
-        Expr::Str(s) if wants_string && !s.contains('{') => {
-            format!("\"{}\".to_string()", escape_str(s))
+        Expr::Str(s) if wants_string => {
+            let (fmt, args) = extract_str_args(s);
+            if args.is_empty() {
+                format!("\"{fmt}\".to_string()")
+            } else {
+                format!("format!(\"{fmt}\", {})", args.join(", "))
+            }
         }
         _ => emit_expr(expr),
     }
 }
 
-fn escape_str(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"'  => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c    => out.push(c),
-        }
-    }
-    out
-}
-
-/// True if the string contains at least one `{ident}` format placeholder
-fn has_interpolation(s: &str) -> bool {
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            let mut ident = String::new();
-            let mut closed = false;
-            for c2 in chars.by_ref() {
-                if c2 == '}' { closed = true; break; }
-                if c2.is_alphanumeric() || c2 == '_' { ident.push(c2); }
-                else { break; }
-            }
-            if closed && !ident.is_empty() { return true; }
-        }
-    }
-    false
-}
-
-/// Prepare a format string: escape non-placeholder `{` as `{{` and `}` as `}}`,
-/// while leaving `{ident}` placeholders untouched. Also escapes quotes etc.
-fn prepare_format_str(s: &str) -> String {
-    let mut out = String::new();
+/// Scan a string for `{expr}` interpolations.
+/// Returns (format_str_with_positional_placeholders, vec_of_expr_strings).
+/// Handles nested braces, escapes special chars for Rust string literals.
+fn extract_str_args(s: &str) -> (String, Vec<String>) {
+    let mut fmt = String::new();
+    let mut args = Vec::new();
     let chars: Vec<char> = s.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        let c = chars[i];
-        match c {
+        match chars[i] {
             '{' => {
-                // Try to scan {ident}
-                let mut j = i + 1;
-                let mut ident = String::new();
-                while j < chars.len() && (chars[j].is_alphanumeric() || chars[j] == '_') {
-                    ident.push(chars[j]);
+                // Scan for matching } tracking depth
+                let start = i + 1;
+                let mut depth = 1usize;
+                let mut j = start;
+                while j < chars.len() {
+                    match chars[j] {
+                        '{' => depth += 1,
+                        '}' => { depth -= 1; if depth == 0 { break; } }
+                        _ => {}
+                    }
                     j += 1;
                 }
-                if !ident.is_empty() && j < chars.len() && chars[j] == '}' {
-                    // It's a placeholder — emit as-is
-                    out.push('{');
-                    out.push_str(&ident);
-                    out.push('}');
+                if depth == 0 {
+                    let expr: String = chars[start..j].iter().collect();
+                    fmt.push_str("{}");
+                    args.push(expr);
                     i = j + 1;
                 } else {
-                    out.push_str("{{");
+                    // Unmatched { — escape it
+                    fmt.push_str("{{");
                     i += 1;
                 }
             }
-            '}' => { out.push_str("}}"); i += 1; }
-            '\\' => { out.push_str("\\\\"); i += 1; }
-            '"'  => { out.push_str("\\\""); i += 1; }
-            '\n' => { out.push_str("\\n");  i += 1; }
-            '\r' => { out.push_str("\\r");  i += 1; }
-            '\t' => { out.push_str("\\t");  i += 1; }
-            c    => { out.push(c); i += 1; }
+            '}' => { fmt.push_str("}}"); i += 1; }
+            '\\' => { fmt.push_str("\\\\"); i += 1; }
+            '"'  => { fmt.push_str("\\\""); i += 1; }
+            '\n' => { fmt.push_str("\\n");  i += 1; }
+            '\r' => { fmt.push_str("\\r");  i += 1; }
+            '\t' => { fmt.push_str("\\t");  i += 1; }
+            c    => { fmt.push(c); i += 1; }
         }
     }
-    out
+    (fmt, args)
+}
+
+/// Emit a Dust string literal as a Rust expression.
+fn emit_str(s: &str) -> String {
+    let (fmt, args) = extract_str_args(s);
+    if args.is_empty() {
+        format!("\"{fmt}\"")
+    } else {
+        format!("format!(\"{fmt}\", {})", args.join(", "))
+    }
+}
+
+/// Process a macro's raw string, applying Dust interpolation to its first string arg.
+/// e.g. `println!("{stack.pop()}")` → `println!("{}", stack.pop())`
+fn process_macro_str(raw: &str) -> String {
+    // Find opening delimiter
+    let open_idx = match raw.find(|c: char| matches!(c, '(' | '[')) {
+        Some(i) => i,
+        None => return raw.to_string(),
+    };
+    let close_ch = if raw.chars().nth(open_idx) == Some('(') { ')' } else { ']' };
+    let inner = raw[open_idx + 1..raw.len() - 1].trim_start();
+
+    if !inner.starts_with('"') {
+        return raw.to_string(); // first arg not a string literal
+    }
+
+    // Parse the string literal (lexer stored it verbatim including escape seqs as text)
+    let chars: Vec<char> = inner.chars().collect();
+    let mut i = 1; // skip opening "
+    let mut str_content = String::new();
+    while i < chars.len() {
+        match chars[i] {
+            '\\' if i + 1 < chars.len() => {
+                let esc = match chars[i + 1] {
+                    'n' => '\n', 'r' => '\r', 't' => '\t',
+                    '"' => '"',  '\\' => '\\', '0' => '\0',
+                    c   => c,
+                };
+                str_content.push(esc);
+                i += 2;
+            }
+            '"' => { i += 1; break; }
+            c   => { str_content.push(c); i += 1; }
+        }
+    }
+    let rest = inner[i..].trim();
+
+    let (fmt, args) = extract_str_args(&str_content);
+    if args.is_empty() {
+        return raw.to_string(); // no expression interpolation, leave as-is
+    }
+
+    let prefix = &raw[..=open_idx];
+    let mut new_args = format!("\"{fmt}\"");
+    for arg in &args { new_args.push_str(&format!(", {arg}")); }
+    if !rest.is_empty() { new_args.push_str(&format!(", {rest}")); }
+    format!("{prefix}{new_args}{close_ch}")
 }
 
 fn emit_expr_as_block(expr: &Expr) -> String {

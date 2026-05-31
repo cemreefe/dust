@@ -17,7 +17,9 @@ struct Store
   next_id: usize
 
   fn new() -> Store
-    Store { todos: vec![], next_id: 1 }
+    Store
+      todos: vec![]
+      next_id: 1
 
   fn add(self, keep title: str) -> usize
     let id = self.next_id

@@ -50,12 +50,12 @@ dust build   hello.dust        # emit hello.rs
 ### Variables
 
 ```dust
-let x = compute()   # immutable runtime binding — can't be reassigned
-mut x = compute()   # mutable runtime binding — can be reassigned
-const X: i32 = 1    # compile-time constant — value must be known at compile time
+let x = compute()   # inferred mutability — compiler decides
+mut x = compute()   # explicitly mutable
+const X: i32 = 1    # explicitly immutable, value known at compile time
 ```
 
-`let` and `mut` are for ordinary variables. `const` is for true compile-time constants (always requires a type annotation, used rarely). When in doubt, use `let`.
+`let` is the default — use it when you don't care about mutability. `mut` opts into mutability explicitly. `const` requires a type annotation and a compile-time value.
 
 ### Functions
 

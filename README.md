@@ -57,6 +57,22 @@ xychart-beta
     bar [30, 26, 27, 18, 18]
 ```
 
+```mermaid
+xychart-beta
+    title "Characters reduction vs Rust (%)"
+    x-axis ["Stack", "RPN calc", "Word freq", "Caesar", "Compare"]
+    y-axis 0 --> 35
+    bar [26, 24, 20, 14, 12]
+```
+
+```mermaid
+xychart-beta
+    title "Token reduction vs Rust (%)"
+    x-axis ["Stack", "RPN calc", "Word freq", "Caesar", "Compare"]
+    y-axis 0 --> 35
+    bar [26, 17, 22, 10, 11]
+```
+
 | Program | Lines | Chars | Tokens |
 |---------|-------|-------|--------|
 | Stack struct | −30% | −26% | −26% |

@@ -4,7 +4,7 @@
 
 # Dust
 
-A programming language that compiles to Rust. Python-influenced syntax, indentation-based blocks, smart ownership defaults. Ugly-but-correct output.
+A programming language that compiles to Rust. Python-influenced syntax, indentation-based blocks, smart ownership defaults.
 
 ```dust
 struct Stack
@@ -21,7 +21,7 @@ struct Stack
     self.values.pop()
 
 fn main()
-  mut stack = Stack::new()
+  mut stack = Stack()
   stack.push(3.0)
   stack.push(4.0)
   println!("{stack.pop()}")
@@ -198,7 +198,7 @@ Dust is a source-to-source transpiler:
 
 - **Lexer** — indentation-aware (INDENT/DEDENT tokens), handles macros, char literals, escape sequences
 - **Parser** — recursive descent, produces a typed AST
-- **Semantic pass** — auto-borrows params, promotes `let` → `let mut` when reassigned, catches `const` mutation
+- **Semantic pass** — auto-borrows params, infers mutability for `let` bindings, catches `const` mutation
 - **Emitter** — walks AST, emits Rust source
 
 The output is valid Rust. You can inspect it with `dust build`.

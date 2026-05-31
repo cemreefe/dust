@@ -32,12 +32,16 @@ fn count_tokens(content: str) -> usize
 fn pct(d: usize, r: usize) -> f64
   (1.0 - d as f64 / r as f64) * 100.0
 
+fn print_row(name: str, metric: str, d: usize, r: usize)
+  let p = pct(d, r)
+  println!("{name:<12} {metric:<8} {d:>5} {r:>5} {p:>5.0}%")
+
 fn compare(name: str, dust_path: str, rust_path: str)
   let d = Stats::analyze(dust_path)
   let r = Stats::analyze(rust_path)
-  println!("{:<12} {:<8} {:>5} {:>5} {:>5.0}%", name, "lines",  d.lines,  r.lines,  pct(d.lines,  r.lines))
-  println!("{:<12} {:<8} {:>5} {:>5} {:>5.0}%", name, "chars",  d.chars,  r.chars,  pct(d.chars,  r.chars))
-  println!("{:<12} {:<8} {:>5} {:>5} {:>5.0}%", name, "tokens", d.tokens, r.tokens, pct(d.tokens, r.tokens))
+  print_row(name, "lines",  d.lines,  r.lines)
+  print_row(name, "chars",  d.chars,  r.chars)
+  print_row(name, "tokens", d.tokens, r.tokens)
   println!("")
 
 fn main()

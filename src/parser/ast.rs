@@ -1,9 +1,10 @@
 /// A type expression, e.g. `i32`, `Vec<T>`, `Option<str>`, `str`
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
-    Simple(String),          // i32, bool, str, etc.
+    Simple(String),           // i32, bool, str, etc.
     Generic(String, Vec<Ty>), // Vec<T>, Option<i32>
-    Ref(Box<Ty>),            // &T  (used internally by semantic pass)
+    Tuple(Vec<Ty>),           // (A, B, C)
+    Ref(Box<Ty>),             // &T  (used internally by semantic pass)
     SelfTy,
 }
 
@@ -125,6 +126,9 @@ pub enum Expr {
 
     // expr[idx]
     Index { obj: Box<Expr>, idx: Box<Expr>, line: usize, col: usize },
+
+    // expr as Type
+    Cast { expr: Box<Expr>, ty: Ty, line: usize, col: usize },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -141,6 +145,7 @@ pub enum UnaryOp {
     Not,
     Ref,    // &expr
     RefMut, // &mut expr
+    Deref,  // *expr
 }
 
 #[derive(Debug, Clone)]
@@ -168,7 +173,7 @@ pub enum Stmt {
     },
 
     For {
-        var: String,
+        vars: Vec<String>,   // ["x"] or ["a", "b"] for tuple destructuring
         iter: Expr,
         body: Vec<Stmt>,
         line: usize,

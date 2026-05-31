@@ -140,6 +140,7 @@ fn emit_ty_owned(ty: &Ty) -> String {
             let inner = args.iter().map(emit_ty_owned).collect::<Vec<_>>().join(", ");
             format!("{name}<{inner}>")
         }
+        Ty::Tuple(elems) => format!("({})", elems.iter().map(emit_ty_owned).collect::<Vec<_>>().join(", ")),
         Ty::Ref(inner) => format!("&{}", emit_ty_ref(inner)),
         Ty::SelfTy => "Self".into(),
     }
@@ -200,17 +201,17 @@ fn emit_stmt(stmt: &Stmt, is_last: bool) -> String {
     match stmt {
         Stmt::Let { name, ty, value, .. } => {
             let ty_ann = ty.as_ref().map(|t| format!(": {}", emit_ty_owned(t))).unwrap_or_default();
-            let val = emit_expr_owned(value, ty.as_ref());
+            let val = emit_expr_bare_owned(value, ty.as_ref());
             format!("let {name}{ty_ann} = {val};")
         }
         Stmt::Const { name, ty, value, .. } => {
             let ty_ann = ty.as_ref().map(|t| format!(": {}", emit_ty_owned(t))).unwrap_or_default();
-            let val = emit_expr_owned(value, ty.as_ref());
+            let val = emit_expr_bare_owned(value, ty.as_ref());
             format!("let {name}{ty_ann} = {val};")
         }
         Stmt::Mut { name, ty, value, .. } => {
             let ty_ann = ty.as_ref().map(|t| format!(": {}", emit_ty_owned(t))).unwrap_or_default();
-            let val = emit_expr_owned(value, ty.as_ref());
+            let val = emit_expr_bare_owned(value, ty.as_ref());
             format!("let mut {name}{ty_ann} = {val};")
         }
         Stmt::Assign { target, value, .. } => {
@@ -238,10 +239,15 @@ fn emit_stmt(stmt: &Stmt, is_last: bool) -> String {
                 "match (|| -> Result<_, _> {{\n{try_stmts}}})() {{\n    Ok(_) => {{}},\n    Err({catch_var}) => {{\n{catch_stmts}    }},\n}}"
             )
         }
-        Stmt::For { var, iter, body, .. } => {
+        Stmt::For { vars, iter, body, .. } => {
+            let pat = if vars.len() == 1 {
+                vars[0].clone()
+            } else {
+                format!("({})", vars.join(", "))
+            };
             let iter_s = emit_expr(iter);
             let body_s = emit_block(body);
-            format!("for {var} in {iter_s} {{\n{body_s}}}")
+            format!("for {pat} in {iter_s} {{\n{body_s}}}")
         }
         Stmt::Break(..)    => "break".into(),
         Stmt::Continue(..) => "continue".into(),
@@ -288,6 +294,7 @@ fn emit_expr(expr: &Expr) -> String {
                 UnaryOp::Not    => format!("!{}", emit_expr(expr)),
                 UnaryOp::Ref    => format!("&{}", emit_expr(expr)),
                 UnaryOp::RefMut => format!("&mut {}", emit_expr(expr)),
+                UnaryOp::Deref  => format!("*{}", emit_expr(expr)),
             }
         }
 
@@ -358,6 +365,10 @@ fn emit_expr(expr: &Expr) -> String {
         Expr::Index { obj, idx, .. } => {
             format!("{}[{}]", emit_expr(obj), emit_expr(idx))
         }
+
+        Expr::Cast { expr, ty, .. } => {
+            format!("{} as {}", emit_expr(expr), emit_ty_owned(ty))
+        }
     }
 }
 
@@ -378,6 +389,30 @@ fn emit_expr_owned(expr: &Expr, ty: Option<&Ty>) -> String {
             }
         }
         _ => emit_expr(expr),
+    }
+}
+
+/// Like emit_expr_owned but strips outer parens.
+fn emit_expr_bare_owned(expr: &Expr, ty: Option<&Ty>) -> String {
+    let s = emit_expr_owned(expr, ty);
+    if s.starts_with('(') && s.ends_with(')') {
+        let mut depth = 0usize;
+        let chars: Vec<char> = s.chars().collect();
+        let mut matched = false;
+        for (i, &c) in chars.iter().enumerate() {
+            match c {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 && i == chars.len() - 1 { matched = true; }
+                    else if depth == 0 { break; }
+                }
+                _ => {}
+            }
+        }
+        if matched { s[1..s.len()-1].to_string() } else { s }
+    } else {
+        s
     }
 }
 
@@ -415,8 +450,15 @@ fn extract_str_args(s: &str) -> (String, Vec<String>) {
                     }
                     if depth == 0 {
                         let expr: String = chars[start..j].iter().collect();
-                        fmt.push_str("{}");
-                        args.push(expr);
+                        // If content contains ':' it's a format spec — emit verbatim
+                        if expr.contains(':') {
+                            fmt.push('{');
+                            fmt.push_str(&expr);
+                            fmt.push('}');
+                        } else {
+                            fmt.push_str("{}");
+                            args.push(expr);
+                        }
                         i = j + 1;
                     } else {
                         fmt.push_str("{{");

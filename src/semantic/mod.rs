@@ -126,7 +126,7 @@ fn collect_assignments(stmts: &[Stmt], ctx: &mut Ctx) -> Result<()> {
             | Stmt::CompoundAssign { target: Expr::Ident { name, line, col }, .. } => {
                 ctx.mark_assigned(name, *line, *col)?;
             }
-            Stmt::For { var, .. } => ctx.declare(var, BindKind::Let),
+            Stmt::For { vars, .. } => { for v in vars { ctx.declare(v, BindKind::Let); } }
             _ => {}
         }
     }

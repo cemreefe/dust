@@ -266,6 +266,16 @@ impl<'a> Parser<'a> {
         let is_ref = self.eat(&Token::Ampersand);
         let ty = match self.peek().clone() {
             Token::KwSelf => { self.advance(); Ty::SelfTy }
+            Token::LParen => {
+                self.advance();
+                let mut elems = Vec::new();
+                while !matches!(self.peek(), Token::RParen | Token::Eof) {
+                    elems.push(self.parse_ty()?);
+                    if !self.eat(&Token::Comma) { break; }
+                }
+                self.expect(&Token::RParen)?;
+                Ty::Tuple(elems)
+            }
             Token::Ident(name) => {
                 self.advance();
                 if self.eat(&Token::Lt) {
@@ -327,11 +337,21 @@ impl<'a> Parser<'a> {
             }
             Token::KwFor => {
                 self.advance();
-                let var = self.expect_ident()?;
+                let vars = if self.eat(&Token::LParen) {
+                    let mut names = Vec::new();
+                    while !matches!(self.peek(), Token::RParen | Token::Eof) {
+                        names.push(self.expect_ident()?);
+                        if !self.eat(&Token::Comma) { break; }
+                    }
+                    self.expect(&Token::RParen)?;
+                    names
+                } else {
+                    vec![self.expect_ident()?]
+                };
                 self.expect(&Token::KwIn)?;
                 let iter = self.parse_expr()?;
                 let body = self.parse_block()?;
-                Ok(Stmt::For { var, iter, body, line, col })
+                Ok(Stmt::For { vars, iter, body, line, col })
             }
             Token::KwTry => {
                 self.advance();
@@ -496,8 +516,7 @@ impl<'a> Parser<'a> {
             return Ok(Expr::UnaryOp { op, expr: Box::new(self.parse_postfix()?), line, col });
         }
         if self.eat(&Token::Star) {
-            // dereference *expr
-            return Ok(Expr::UnaryOp { op: UnaryOp::Neg, expr: Box::new(self.parse_postfix()?), line, col });
+            return Ok(Expr::UnaryOp { op: UnaryOp::Deref, expr: Box::new(self.parse_postfix()?), line, col });
         }
         self.parse_postfix()
     }
@@ -512,6 +531,11 @@ impl<'a> Parser<'a> {
                     Token::Ident(s) if s == "unwrap!" || s == "unwrap!()" => {
                         self.advance();
                         expr = Expr::Unwrap(Box::new(expr), line, col);
+                    }
+                    Token::Int(n) => {
+                        // tuple field access: expr.0, expr.1, etc.
+                        self.advance();
+                        expr = Expr::FieldAccess { obj: Box::new(expr), field: n.to_string(), line, col };
                     }
                     Token::Ident(field) => {
                         self.advance();
@@ -568,6 +592,9 @@ impl<'a> Parser<'a> {
                         _ => return Err(DustError::new("invalid path", line, col)),
                     };
                 }
+            } else if self.eat(&Token::KwAs) {
+                let ty = self.parse_ty()?;
+                expr = Expr::Cast { expr: Box::new(expr), ty, line, col };
             } else {
                 break;
             }

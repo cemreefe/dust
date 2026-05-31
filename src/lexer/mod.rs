@@ -166,6 +166,14 @@ impl Lexer {
                 }
                 Some(c) if c.is_alphabetic() || c == '_' => {
                     self.advance();
+                    // b'x' byte literal
+                    if c == 'b' && self.peek() == Some('\'') {
+                        self.advance(); // consume '
+                        if let Token::Char(ch) = self.lex_char(line, col)? {
+                            tokens.push(Spanned::new(Token::Int(ch as i64), line, col));
+                            continue;
+                        }
+                    }
                     let tok = self.lex_ident(c);
                     // Check for macro: ident immediately followed by !
                     if self.peek() == Some('!') {

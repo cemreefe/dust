@@ -38,6 +38,7 @@ pub enum Token {
     KwBreak,
     KwContinue,
     KwSelf,
+    KwAs,
 
     // Operators
     Arrow,       // ->
@@ -118,6 +119,7 @@ impl Token {
             "break"    => Some(Token::KwBreak),
             "continue" => Some(Token::KwContinue),
             "self"     => Some(Token::KwSelf),
+            "as"       => Some(Token::KwAs),
             "true"     => Some(Token::Bool(true)),
             "false"    => Some(Token::Bool(false)),
             _          => None,

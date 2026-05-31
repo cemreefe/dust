@@ -1,2 +1,9 @@
 /target
 examples/*.rs
+examples/caesar
+examples/compare
+examples/rpn
+examples/stack
+examples/todo_server
+examples/wordfreq
+docs/superpowers/

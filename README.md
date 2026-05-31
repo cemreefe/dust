@@ -45,6 +45,18 @@ dust compile hello.dust        # compile to binary
 dust build   hello.dust        # emit hello.rs
 ```
 
+## vs Rust
+
+Consistently **~20–30% less code** across real programs, measured by lines, characters, and tokens:
+
+| Program | Lines | Chars | Tokens |
+|---------|-------|-------|--------|
+| Stack struct | −30% | −26% | −26% |
+| RPN calculator | −26% | −24% | −17% |
+| Word frequency | −27% | −20% | −22% |
+| Caesar cipher | −18% | −14% | −10% |
+| This comparison script | −18% | −12% | −11% |
+
 ## Syntax
 
 ### Variables
@@ -87,6 +99,8 @@ struct Point
     (self.x * self.x + self.y * self.y).sqrt()
 ```
 
+`Type()` is sugar for `Type::new()`.
+
 ### Control Flow
 
 ```dust
@@ -123,6 +137,9 @@ match result
 for item in collection.iter()
   println!("{item}")
 
+for (key, val) in map.iter()
+  println!("{key}: {val}")
+
 for line in stdin.lock().lines()
   let line = line.unwrap!
   println!("{line}")
@@ -136,6 +153,13 @@ x += n   x -= n    # compound assign
 x ||= y  x &&= y   # logical assign
 ```
 
+### Closures
+
+```dust
+items.map(x -> x * 2)
+items.sort_by(a, b -> a.cmp(b))
+```
+
 ### Error handling
 
 ```dust
@@ -145,13 +169,34 @@ let val = risky()?             # propagate
 
 ### String interpolation
 
-Any expression works inside `{}`:
+Any expression works inside `{}`. Format specs are passed through:
 
 ```dust
 println!("Hello, {name}!")
 println!("result: {stack.pop()}")
 println!("x squared: {x * x}")
-let msg = "uppercase: {name.to_uppercase()}"
+println!("{name:<12} {score:>5}")
+```
+
+### Casts & byte literals
+
+```dust
+let n = c as u8
+let c = 65u8 as char
+let byte = b'A'        # 65
+```
+
+### Tuples
+
+```dust
+fn minmax(v: Vec<i32>) -> (i32, i32)
+  ...
+
+for (key, val) in map.iter()
+  ...
+
+let x = pair.0
+let y = pair.1
 ```
 
 ### Ownership
@@ -184,9 +229,13 @@ struct Dog
 
 | File | Description |
 |------|-------------|
-| `examples/rpn.dust` | RPN calculator (stdin) |
-| `examples/todo_server.dust` | HTTP todo server with frontend |
 | `examples/hello.dust` | Hello world |
+| `examples/stack.dust` | Stack struct |
+| `examples/rpn.dust` | RPN calculator (stdin) |
+| `examples/caesar.dust` | Caesar cipher (stdin) |
+| `examples/wordfreq.dust` | Word frequency counter (stdin) |
+| `examples/compare.dust` | Dust vs Rust comparison script |
+| `examples/todo_server.dust` | HTTP todo server with web frontend |
 
 ## How it works
 
@@ -196,7 +245,7 @@ Dust is a source-to-source transpiler:
 .dust → Lexer → Parser → Semantic pass → Emitter → .rs → rustc → binary
 ```
 
-- **Lexer** — indentation-aware (INDENT/DEDENT tokens), handles macros, char literals, escape sequences
+- **Lexer** — indentation-aware (INDENT/DEDENT tokens), handles macros, char literals, byte literals, escape sequences
 - **Parser** — recursive descent, produces a typed AST
 - **Semantic pass** — auto-borrows params, infers mutability for `let` bindings, catches `const` mutation
 - **Emitter** — walks AST, emits Rust source

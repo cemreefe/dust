@@ -212,12 +212,37 @@ enum Shape
 
 ### Traits
 
+Define a trait:
+
+```dust
+trait Animal
+  fn sound(self) -> str
+  fn name(self) -> str
+```
+
+Implement it with `is`:
+
 ```dust
 struct Dog
+  is Animal
+
+  fn Animal.sound(self) -> str
+    "woof"
+
+  fn Animal.name(self) -> str
+    "dog"
+```
+
+Implement stdlib traits the same way:
+
+```dust
+struct Point
+  x: f64
+  y: f64
   is Display
 
   fn Display.fmt(self, mut f: Formatter) -> Result
-    write!(f, "Dog")
+    write!(f, "({}, {})", self.x, self.y)
 ```
 
 ## Examples

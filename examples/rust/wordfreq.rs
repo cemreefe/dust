@@ -16,7 +16,7 @@ impl WordCounter {
 
     fn top(&self, n: usize) -> Vec<(String, usize)> {
         let mut pairs: Vec<_> = self.counts.iter().map(|(w, c)| (w.clone(), *c)).collect();
-        pairs.sort_by(|a, b| b.1.cmp(&a.1));
+        pairs.sort_by(|pair_a, pair_b| pair_b.1.cmp(&pair_a.1));
         pairs.into_iter().take(n).collect()
     }
 }

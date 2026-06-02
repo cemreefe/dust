@@ -1,18 +1,18 @@
 use std::io
 use std::io::BufRead
 
-fn shift_char(c: char, n: u8) -> char
-  if c >= c'a' && c <= c'z'
-    let shifted = (c as u8 - b'a' + n) % 26 + b'a'
+fn shift_char(ch: char, shift: u8) -> char
+  if ch >= c'a' && ch <= c'z'
+    let shifted = (ch as u8 - b'a' + shift) % 26 + b'a'
     shifted as char
-  elif c >= c'A' && c <= c'Z'
-    let shifted = (c as u8 - b'A' + n) % 26 + b'A'
+  elif ch >= c'A' && ch <= c'Z'
+    let shifted = (ch as u8 - b'A' + shift) % 26 + b'A'
     shifted as char
   else
-    c
+    ch
 
 fn caesar(text: str, shift: u8) -> str
-  text.chars().map(c -> shift_char(c, shift)).collect()
+  text.chars().map(ch -> shift_char(ch, shift)).collect()
 
 fn main()
   let stdin = io::stdin()

@@ -18,20 +18,20 @@ impl Stack {
     }
 
     fn apply(&mut self, op: &str) -> bool {
-        let b = match self.pop() {
-            Some(v) => v,
+        let rhs = match self.pop() {
+            Some(val) => val,
             None => return false,
         };
-        let a = match self.pop() {
-            Some(v) => v,
+        let lhs = match self.pop() {
+            Some(val) => val,
             None => return false,
         };
         let result = match op {
-            "+" => a + b,
-            "-" => a - b,
-            "*" => a * b,
-            "/" => a / b,
-            "%" => a % b,
+            "+" => lhs + rhs,
+            "-" => lhs - rhs,
+            "*" => lhs * rhs,
+            "/" => lhs / rhs,
+            "%" => lhs % rhs,
             _ => return false,
         };
         self.push(result);
@@ -47,7 +47,7 @@ fn eval(line: &str) -> String {
     let mut stack = Stack::new();
     for token in line.split_whitespace() {
         match token.parse::<f64>() {
-            Ok(n) => stack.push(n),
+            Ok(num) => stack.push(num),
             Err(_) => {
                 if !stack.apply(token) {
                     return "error: invalid token or not enough operands".to_string();

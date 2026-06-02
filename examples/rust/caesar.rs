@@ -1,19 +1,19 @@
 use std::io::{self, BufRead};
 
-fn shift_char(c: char, n: u8) -> char {
-    if c >= 'a' && c <= 'z' {
-        let shifted = (c as u8 - b'a' + n) % 26 + b'a';
+fn shift_char(ch: char, shift: u8) -> char {
+    if ch >= 'a' && ch <= 'z' {
+        let shifted = (ch as u8 - b'a' + shift) % 26 + b'a';
         shifted as char
-    } else if c >= 'A' && c <= 'Z' {
-        let shifted = (c as u8 - b'A' + n) % 26 + b'A';
+    } else if ch >= 'A' && ch <= 'Z' {
+        let shifted = (ch as u8 - b'A' + shift) % 26 + b'A';
         shifted as char
     } else {
-        c
+        ch
     }
 }
 
 fn caesar(text: &str, shift: u8) -> String {
-    text.chars().map(|c| shift_char(c, shift)).collect()
+    text.chars().map(|ch| shift_char(ch, shift)).collect()
 }
 
 fn main() {

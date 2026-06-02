@@ -35,13 +35,13 @@ fn count_tokens(content: &str) -> usize {
     count
 }
 
-fn percent_reduction(dust_val: usize, rust_val: usize) -> f64 {
+fn percent(dust_val: usize, rust_val: usize) -> f64 {
     (1.0 - dust_val as f64 / rust_val as f64) * 100.0
 }
 
 fn print_row(name: &str, metric: &str, dust_val: usize, rust_val: usize) {
-    let percent = percent_reduction(dust_val, rust_val);
-    println!("{name:<12} {metric:<8} {dust_val:>5} {rust_val:>5} {percent:>5.0}%");
+    let percent_ = percent(dust_val, rust_val);
+    println!("{name:<12} {metric:<8} {dust_val:>5} {rust_val:>5} {percent_:>5.0}%");
 }
 
 fn compare(name: &str, dust_path: &str, rust_path: &str) {

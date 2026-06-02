@@ -1,0 +1,24 @@
+use std::f64::consts::PI
+
+enum Shape
+  Circle(f64)
+  Rect(f64, f64)
+  Triangle(f64, f64)
+
+fn area(shape: Shape) -> f64
+  match shape
+    Circle(r)      -> PI * r * r
+    Rect(w, h)     -> w * h
+    Triangle(b, h) -> 0.5 * b * h
+
+fn describe(shape: Shape) -> str
+  match shape
+    Circle(r)      -> "circle with radius {r}"
+    Rect(w, h)     -> "rectangle {w}x{h}"
+    Triangle(b, h) -> "triangle base={b} height={h}"
+
+fn main()
+  let shapes = vec![Shape::Circle(3.0), Shape::Rect(4.0, 5.0), Shape::Triangle(6.0, 8.0)]
+  for shape in shapes
+    let a = area(shape)
+    println!("{describe(shape)}: area = {a:.2}")

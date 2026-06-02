@@ -10,10 +10,6 @@ A programming language that compiles to Rust. Python-influenced syntax, indentat
 struct Stack
   values: Vec<f64>
 
-  fn new() -> Stack
-    Stack
-      values: vec![]
-
   fn push(self, n: f64)
     self.values.push(n)
 

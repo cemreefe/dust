@@ -106,6 +106,11 @@ impl Lexer {
                     Some('"')  => s.push('"'),
                     Some('\\') => s.push('\\'),
                     Some('0')  => s.push('\0'),
+                    Some('x')  => {
+                        let hi = self.advance().and_then(|c| c.to_digit(16)).unwrap_or(0);
+                        let lo = self.advance().and_then(|c| c.to_digit(16)).unwrap_or(0);
+                        s.push(char::from_u32(hi * 16 + lo).unwrap_or('\0'));
+                    }
                     _ => return Err(DustError::new("invalid escape sequence", self.line, self.col)),
                 },
                 Some(c) => s.push(c),
@@ -222,6 +227,7 @@ impl Lexer {
                         '*' => if self.peek() == Some('=') { self.advance(); Token::StarEq } else { Token::Star },
                         '/' => if self.peek() == Some('=') { self.advance(); Token::SlashEq } else { Token::Slash },
                         '%' => Token::Percent,
+                        '~' => Token::Tilde,
                         '(' => Token::LParen,
                         ')' => Token::RParen,
                         '[' => Token::LBracket,

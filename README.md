@@ -20,7 +20,7 @@ fn main()
   mut stack = Stack()
   stack.push(3.0)
   stack.push(4.0)
-  println!("{stack.pop()}")
+  println!(stack.pop())
 ```
 
 ## Install

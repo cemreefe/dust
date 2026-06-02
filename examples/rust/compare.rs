@@ -1,0 +1,64 @@
+use std::fs;
+
+struct Stats {
+    lines: usize,
+    chars: usize,
+    tokens: usize,
+}
+
+impl Stats {
+    fn analyze(path: &str) -> Stats {
+        let content = fs::read_to_string(path).unwrap();
+        let lines = content.lines().filter(|l| !l.trim().is_empty()).count();
+        let chars = content.len();
+        let tokens = count_tokens(&content);
+        Stats { lines, chars, tokens }
+    }
+}
+
+fn count_tokens(content: &str) -> usize {
+    let mut count: usize = 0;
+    let mut in_word = false;
+    for c in content.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        } else {
+            in_word = false;
+            if !c.is_whitespace() {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn pct(d: usize, r: usize) -> f64 {
+    (1.0 - d as f64 / r as f64) * 100.0
+}
+
+fn print_row(name: &str, metric: &str, d: usize, r: usize) {
+    let p = pct(d, r);
+    println!("{name:<12} {metric:<8} {d:>5} {r:>5} {p:>5.0}%");
+}
+
+fn compare(name: &str, dust_path: &str, rust_path: &str) {
+    let d = Stats::analyze(dust_path);
+    let r = Stats::analyze(rust_path);
+    print_row(name, "lines",  d.lines,  r.lines);
+    print_row(name, "chars",  d.chars,  r.chars);
+    print_row(name, "tokens", d.tokens, r.tokens);
+    println!("");
+}
+
+fn main() {
+    println!("{:<12} {:<8} {:>5} {:>5} {:>6}", "Program", "Metric", "Dust", "Rust", "−%");
+    println!("{}", "─".repeat(42));
+    compare("Stack",     "examples/stack.dust",    "examples/stack.rs.reference");
+    compare("RPN calc",  "examples/rpn.dust",      "examples/rpn.rs.reference");
+    compare("Word freq", "examples/wordfreq.dust", "examples/wordfreq.rs.reference");
+    compare("Caesar",    "examples/caesar.dust",   "examples/caesar.rs.reference");
+    compare("Compare",   "examples/compare.dust",  "examples/compare.rs.reference");
+}

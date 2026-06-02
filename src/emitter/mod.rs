@@ -77,7 +77,6 @@ const STDLIB_REF_METHODS: &[&str] = &[
     "eq", "ne",
     "contains", "contains_key", "starts_with", "ends_with",
     "find", "rfind", "split_once", "strip_prefix", "strip_suffix",
-    "trim_matches", "trim_start_matches", "trim_end_matches",
     "get", "get_mut", "remove", "binary_search",
     "push_str",
 ];

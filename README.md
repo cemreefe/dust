@@ -191,6 +191,9 @@ for (key, val) in map
 
 let x = pair.0
 let y = pair.1
+
+let (x, y) = pair     # destructure
+let x, y   = pair     # same
 ```
 
 ### Ownership

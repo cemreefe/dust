@@ -13,6 +13,7 @@ struct SigTable {
     methods: HashMap<String, Vec<bool>>, // method_name → [should_ref per arg]
     structs_with_new: std::collections::HashSet<String>, // structs with explicit fn new
     struct_fields: HashMap<String, HashMap<String, Ty>>, // struct_name → field_name → Ty
+    enum_variants: HashMap<String, String>, // variant_name → enum_name
 }
 
 fn should_ref_param(p: &Param) -> bool {
@@ -26,6 +27,7 @@ fn build_sig_table(items: &[Item]) -> SigTable {
     let mut methods = HashMap::new();
     let mut structs_with_new = std::collections::HashSet::new();
     let mut struct_fields = HashMap::new();
+    let mut enum_variants = HashMap::new();
     for item in items {
         match item {
             Item::Fn { name, params, .. } => {
@@ -43,10 +45,15 @@ fn build_sig_table(items: &[Item]) -> SigTable {
                     }
                 }
             }
+            Item::Enum { name, variants, .. } => {
+                for v in variants {
+                    enum_variants.insert(v.name.clone(), name.clone());
+                }
+            }
             _ => {}
         }
     }
-    SigTable { fns, methods, structs_with_new, struct_fields }
+    SigTable { fns, methods, structs_with_new, struct_fields, enum_variants }
 }
 
 fn is_str_ret(ty: Option<&Ty>) -> bool {
@@ -423,6 +430,11 @@ impl Emitter {
         // Also handle `str()` as a type constructor (maps to String)
         if let Expr::Ident { name, .. } = func {
             let name = &(if name == "str" { "String".to_string() } else { name.clone() });
+            // Enum variant: Circle(r) → Shape::Circle(r)
+            if let Some(enum_name) = self.sig.enum_variants.get(name.as_str()) {
+                let a = args.iter().map(|a| self.emit_expr(a)).collect::<Vec<_>>().join(", ");
+                return format!("{enum_name}::{name}({a})");
+            }
             if name.starts_with(|c: char| c.is_uppercase()) && !ENUM_VARIANTS.contains(&name.as_str()) {
                 if args.is_empty() {
                     let ctor = if self.sig.structs_with_new.contains(name.as_str()) { "new" } else { "default" };
@@ -595,7 +607,13 @@ impl Emitter {
                 format!("match {s} {{\n{arms_str}\n}}")
             }
             Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, ret_ty)),
-            _ => self.emit_expr(expr),
+            _ => {
+                if is_str_ret(ret_ty) && needs_owned_coerce(expr) {
+                    self.coerce_to_owned(expr)
+                } else {
+                    self.emit_expr(expr)
+                }
+            }
         }
     }
 }

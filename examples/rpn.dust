@@ -40,11 +40,11 @@ fn eval(line: str) -> str
       Ok(n) -> stack.push(n)
       Err(_) ->
         if !stack.apply(token)
-          return "error: invalid token or not enough operands".to_string()
+          return "error: invalid token or not enough operands"
 
   match stack.peek()
     Some(result) -> result.to_string()
-    None -> "error: empty expression".to_string()
+    None -> "error: empty expression"
 
 fn main()
   println!("Dust RPN calculator. Examples:  3 4 +   |   2 3 4 * +   |   10 2 /")
@@ -55,4 +55,4 @@ fn main()
     let line = line.trim()
     if line.is_empty()
       continue
-    println!("= {}", eval(line))
+    println!("= {eval(line)}")

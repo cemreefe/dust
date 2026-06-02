@@ -12,6 +12,7 @@ struct SigTable {
     fns:     HashMap<String, Vec<bool>>, // fn_name  → [should_ref per arg]
     methods: HashMap<String, Vec<bool>>, // method_name → [should_ref per arg]
     structs_with_new: std::collections::HashSet<String>, // structs with explicit fn new
+    struct_fields: HashMap<String, HashMap<String, Ty>>, // struct_name → field_name → Ty
 }
 
 fn should_ref_param(p: &Param) -> bool {
@@ -24,12 +25,17 @@ fn build_sig_table(items: &[Item]) -> SigTable {
     let mut fns     = HashMap::new();
     let mut methods = HashMap::new();
     let mut structs_with_new = std::collections::HashSet::new();
+    let mut struct_fields = HashMap::new();
     for item in items {
         match item {
             Item::Fn { name, params, .. } => {
                 fns.insert(name.clone(), params.iter().map(should_ref_param).collect());
             }
-            Item::Struct { name, methods: meths, .. } => {
+            Item::Struct { name, fields, methods: meths, .. } => {
+                struct_fields.insert(
+                    name.clone(),
+                    fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect(),
+                );
                 for m in meths {
                     methods.insert(m.name.clone(), m.params.iter().map(should_ref_param).collect());
                     if m.name == "new" {
@@ -40,7 +46,21 @@ fn build_sig_table(items: &[Item]) -> SigTable {
             _ => {}
         }
     }
-    SigTable { fns, methods, structs_with_new }
+    SigTable { fns, methods, structs_with_new, struct_fields }
+}
+
+fn is_str_ret(ty: Option<&Ty>) -> bool {
+    matches!(ty, Some(Ty::Simple(s)) if s == "str")
+}
+
+fn needs_owned_coerce(expr: &Expr) -> bool {
+    match expr {
+        // Non-interpolated string literals are &str — need .to_string() for String return
+        Expr::Str(s) => extract_str_args(s).1.is_empty(),
+        // Variables and field accesses may hold &str — coerce conservatively
+        Expr::Ident { .. } | Expr::FieldAccess { .. } | Expr::Index { .. } => true,
+        _ => false,
+    }
 }
 
 fn needs_ref(expr: &Expr) -> bool {
@@ -52,14 +72,18 @@ fn needs_ref(expr: &Expr) -> bool {
     }
 }
 
+/// Macros whose first argument is a format string.
+const FORMAT_MACROS: &[&str] = &[
+    "println!", "print!", "eprintln!", "eprint!", "format!", "panic!", "write!", "writeln!",
+];
+
 /// Stdlib methods whose arguments take &T.
 const STDLIB_REF_METHODS: &[&str] = &[
     "cmp", "partial_cmp", "max", "min", "clamp",
     "eq", "ne",
     "contains", "contains_key", "starts_with", "ends_with",
     "find", "rfind", "split_once", "strip_prefix", "strip_suffix",
-    "trim_matches", "trim_start_matches", "trim_end_matches",
-    "get", "get_mut", "remove", "binary_search", "entry",
+    "get", "get_mut", "remove", "binary_search",
     "push_str",
 ];
 
@@ -94,6 +118,27 @@ impl Emitter {
             Item::Trait { name, generics, methods, .. } => self.emit_trait(name, generics, methods),
             Item::Enum { name, variants, .. } => emit_enum(name, variants),
             Item::Use { path, .. } => format!("use {};", path),
+            Item::Const { name, value, .. } => {
+                let (ty, val) = match value {
+                    Expr::Str(s)   => {
+                        let escaped: String = s.chars().map(|c| match c {
+                            '\n' => "\\n".to_string(),
+                            '\r' => "\\r".to_string(),
+                            '\t' => "\\t".to_string(),
+                            '"'  => "\\\"".to_string(),
+                            '\\' => "\\\\".to_string(),
+                            c if (c as u32) < 0x20 => format!("\\x{:02x}", c as u32),
+                            c    => c.to_string(),
+                        }).collect();
+                        ("&str".to_string(), format!("\"{escaped}\""))
+                    }
+                    Expr::Int(n)   => ("i64".to_string(), n.to_string()),
+                    Expr::Float(f) => ("f64".to_string(), format!("{f}")),
+                    Expr::Bool(b)  => ("bool".to_string(), b.to_string()),
+                    other          => ("_".to_string(), self.emit_expr(other)),
+                };
+                format!("const {name}: {ty} = {val};")
+            }
         }
     }
 
@@ -102,7 +147,7 @@ impl Emitter {
         let gp = if generics.is_empty() { String::new() } else { format!("<{generics}>") };
         let params_str = params.iter().map(emit_param).collect::<Vec<_>>().join(", ");
         let ret = ret_ty.map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
-        let body_str = self.emit_block(body);
+        let body_str = self.emit_block(body, ret_ty);
         format!("{async_kw}fn {name}{gp}({params_str}){ret} {{\n{body_str}}}\n")
     }
 
@@ -167,7 +212,7 @@ impl Emitter {
         let ret = m.ret_ty.as_ref().map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
         match &m.body {
             Some(body) => {
-                let body_str = self.emit_block(body);
+                let body_str = self.emit_block(body, m.ret_ty.as_ref());
                 format!("{async_kw}fn {}({params_str}){ret} {{\n{body_str}}}\n", m.name)
             }
             None => format!("{async_kw}fn {}({params_str}){ret};\n", m.name),
@@ -186,11 +231,11 @@ impl Emitter {
 
     // ── Blocks & Statements ────────────────────────────────────────────────────
 
-    fn emit_block(&self, stmts: &[Stmt]) -> String {
+    fn emit_block(&self, stmts: &[Stmt], ret_ty: Option<&Ty>) -> String {
         let mut out = String::new();
         let last = stmts.len().saturating_sub(1);
         for (i, stmt) in stmts.iter().enumerate() {
-            let line = self.emit_stmt(stmt, i == last);
+            let line = self.emit_stmt(stmt, i == last, ret_ty);
             for l in line.lines() {
                 out.push_str("    ");
                 out.push_str(l);
@@ -200,10 +245,17 @@ impl Emitter {
         out
     }
 
-    fn emit_stmt(&self, stmt: &Stmt, is_last: bool) -> String {
+    fn emit_stmt(&self, stmt: &Stmt, is_last: bool, ret_ty: Option<&Ty>) -> String {
         match stmt {
             Stmt::Let { name, ty, value, .. } => {
                 let ty_ann = ty.as_ref().map(|t| format!(": {}", emit_ty_owned(t))).unwrap_or_default();
+                if let Expr::Ident { name: sentinel, .. } = value {
+                    if sentinel == "~uninit~" {
+                        return format!("let {name}{ty_ann};");
+                    } else if sentinel == "~default~" {
+                        return format!("let {name}{ty_ann} = Default::default();");
+                    }
+                }
                 format!("let {name}{ty_ann} = {};", self.emit_expr_bare_owned(value, ty.as_ref()))
             }
             Stmt::Const { name, ty, value, .. } => {
@@ -212,6 +264,13 @@ impl Emitter {
             }
             Stmt::Mut { name, ty, value, .. } => {
                 let ty_ann = ty.as_ref().map(|t| format!(": {}", emit_ty_owned(t))).unwrap_or_default();
+                if let Expr::Ident { name: sentinel, .. } = value {
+                    if sentinel == "~uninit~" {
+                        return format!("let mut {name}{ty_ann};");
+                    } else if sentinel == "~default~" {
+                        return format!("let mut {name}{ty_ann} = Default::default();");
+                    }
+                }
                 format!("let mut {name}{ty_ann} = {};", self.emit_expr_bare_owned(value, ty.as_ref()))
             }
             Stmt::Assign { target, value, .. } => {
@@ -226,19 +285,34 @@ impl Emitter {
                 }
             }
             Stmt::Expr(e) => {
-                let s = if is_last { self.emit_expr_bare(e) } else { self.emit_expr(e) };
-                if is_last { s } else { format!("{s};") }
+                if is_last {
+                    // Tail expression: coerce to String if this block returns `str`
+                    if is_str_ret(ret_ty) && needs_owned_coerce(e) {
+                        self.coerce_to_owned(e)
+                    } else {
+                        strip_outer_parens(self.emit_expr_ret(e, ret_ty))
+                    }
+                } else {
+                    format!("{};", self.emit_expr_ret(e, ret_ty))
+                }
             }
-            Stmt::Return(Some(e), ..) => format!("return {};", self.emit_expr(e)),
-            Stmt::Return(None, ..)    => "return;".into(),
+            Stmt::Return(Some(e), ..) => {
+                let val = if is_str_ret(ret_ty) && needs_owned_coerce(e) {
+                    self.coerce_to_owned(e)
+                } else {
+                    self.emit_expr(e)
+                };
+                format!("return {};", val)
+            }
+            Stmt::Return(None, ..) => "return;".into(),
             Stmt::TryCatch { try_block, catch_var, catch_block, .. } => {
-                let try_s   = self.emit_block(try_block);
-                let catch_s = self.emit_block(catch_block);
+                let try_s   = self.emit_block(try_block, ret_ty);
+                let catch_s = self.emit_block(catch_block, ret_ty);
                 format!("match (|| -> Result<_, _> {{\n{try_s}}})() {{\n    Ok(_) => {{}},\n    Err({catch_var}) => {{\n{catch_s}    }},\n}}")
             }
             Stmt::For { vars, iter, body, .. } => {
                 let pat = if vars.len() == 1 { vars[0].clone() } else { format!("({})", vars.join(", ")) };
-                format!("for {pat} in {} {{\n{}}}", self.emit_expr(iter), self.emit_block(body))
+                format!("for {pat} in {} {{\n{}}}", self.emit_expr(iter), self.emit_block(body, ret_ty))
             }
             Stmt::Break(..)    => "break".into(),
             Stmt::Continue(..) => "continue".into(),
@@ -287,8 +361,12 @@ impl Emitter {
             }
 
             Expr::StructLit { name, fields, .. } => {
+                let field_types = self.sig.struct_fields.get(name.as_str());
                 let fs = fields.iter()
-                    .map(|(k, v)| format!("{k}: {}", self.emit_expr(v)))
+                    .map(|(k, v)| {
+                        let ty = field_types.and_then(|m| m.get(k.as_str()));
+                        format!("{k}: {}", self.emit_expr_bare_owned(v, ty))
+                    })
                     .collect::<Vec<_>>().join(", ");
                 format!("{name} {{ {fs} }}")
             }
@@ -318,7 +396,7 @@ impl Emitter {
                 format!("|{ps}| {}", self.emit_expr_bare(body))
             }
 
-            Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts)),
+            Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, None)),
 
             Expr::Return(Some(e), ..) => format!("return {}", self.emit_expr(e)),
             Expr::Return(None, ..)    => "return".into(),
@@ -342,7 +420,9 @@ impl Emitter {
         const ENUM_VARIANTS: &[&str] = &["Some", "None", "Ok", "Err"];
 
         // Struct constructor: Uppercase(args) → Type::default() / Type::new(args)
+        // Also handle `str()` as a type constructor (maps to String)
         if let Expr::Ident { name, .. } = func {
+            let name = &(if name == "str" { "String".to_string() } else { name.clone() });
             if name.starts_with(|c: char| c.is_uppercase()) && !ENUM_VARIANTS.contains(&name.as_str()) {
                 if args.is_empty() {
                     let ctor = if self.sig.structs_with_new.contains(name.as_str()) { "new" } else { "default" };
@@ -366,18 +446,26 @@ impl Emitter {
                 let a = self.emit_args(args, Some(refs));
                 return format!("{obj_s}.{field}({a})");
             }
-            // Stdlib ref-arg method
+            // Stdlib ref-arg method — always insert & unless arg is already a ref expression
             if STDLIB_REF_METHODS.contains(&field.as_str()) {
                 let a = args.iter().map(|arg| {
                     let s = self.emit_expr(arg);
-                    if needs_ref(arg) { format!("&{s}") } else { s }
+                    let already_ref = matches!(arg,
+                        Expr::UnaryOp { op: UnaryOp::Ref, .. } |
+                        Expr::UnaryOp { op: UnaryOp::RefMut, .. }
+                    );
+                    if already_ref { s } else { format!("&{s}") }
                 }).collect::<Vec<_>>().join(", ");
                 return format!("{obj_s}.{field}({a})");
             }
         }
 
         let f = self.emit_expr(func);
-        let a = args.iter().map(|arg| self.emit_expr(arg)).collect::<Vec<_>>().join(", ");
+        let a = args.iter().map(|arg| {
+            let s = self.emit_expr(arg);
+            // Index into a collection (e.g. args[1]) yields &T in Rust — always needs & when passed to fns
+            if matches!(arg, Expr::Index { .. }) { format!("&{s}") } else { s }
+        }).collect::<Vec<_>>().join(", ");
         format!("{f}({a})")
     }
 
@@ -388,7 +476,19 @@ impl Emitter {
         };
         let close_ch = if raw.chars().nth(open_idx) == Some('(') { ')' } else { ']' };
         let inner = raw[open_idx + 1..raw.len() - 1].trim_start();
-        if !inner.starts_with('"') { return raw.to_string(); }
+        if !inner.starts_with('"') {
+            let macro_name = &raw[..=open_idx]; // includes the '('
+            let name_only = raw[..open_idx].trim();
+            if FORMAT_MACROS.contains(&name_only) && is_single_arg(inner) {
+                let emitted = if let Some(expr) = parser::parse_expr_str(inner) {
+                    self.emit_expr(&expr)
+                } else {
+                    inner.to_string()
+                };
+                return format!("{macro_name}\"{{}}\", {emitted}{close_ch}");
+            }
+            return raw.to_string();
+        }
 
         let chars: Vec<char> = inner.chars().collect();
         let mut i = 1;
@@ -407,7 +507,8 @@ impl Emitter {
                 c   => { str_content.push(c); i += 1; }
             }
         }
-        let rest = inner[i..].trim();
+        let byte_offset: usize = inner.chars().take(i).map(|c| c.len_utf8()).sum();
+        let rest = inner[byte_offset..].trim();
         let (fmt, raw_args) = extract_str_args(&str_content);
         if raw_args.is_empty() { return raw.to_string(); }
 
@@ -441,7 +542,8 @@ impl Emitter {
     }
 
     fn emit_expr_owned(&self, expr: &Expr, ty: Option<&Ty>) -> String {
-        let wants_string = matches!(ty, Some(Ty::Simple(s)) if s == "str") || ty.is_none();
+        // Only coerce to String when the type is explicitly `str`; otherwise let Rust infer.
+        let wants_string = matches!(ty, Some(Ty::Simple(s)) if s == "str");
         match expr {
             Expr::Str(s) if wants_string => {
                 let (fmt, args) = extract_str_args(s);
@@ -452,14 +554,48 @@ impl Emitter {
         }
     }
 
+    /// Coerce expr to String when returning from a `-> str` function.
+    /// Only plain literals and variables need coercion; format!/to_string() calls already produce String.
+    fn coerce_to_owned(&self, expr: &Expr) -> String {
+        let s = self.emit_expr(expr);
+        if needs_owned_coerce(expr) { format!("{s}.to_string()") } else { s }
+    }
+
     fn emit_expr_bare_owned(&self, expr: &Expr, ty: Option<&Ty>) -> String {
         strip_outer_parens(self.emit_expr_owned(expr, ty))
     }
 
     fn emit_expr_as_block(&self, expr: &Expr) -> String {
+        self.emit_expr_as_block_ret(expr, None)
+    }
+
+    fn emit_expr_as_block_ret(&self, expr: &Expr, ret_ty: Option<&Ty>) -> String {
         match expr {
-            Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts)),
-            _ => format!("{{ {} }}", self.emit_expr(expr)),
+            Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, ret_ty)),
+            _ => format!("{{ {} }}", self.emit_expr_ret(expr, ret_ty)),
+        }
+    }
+
+    /// Like emit_expr but threads ret_ty into block-containing sub-expressions (if, match, block).
+    fn emit_expr_ret(&self, expr: &Expr, ret_ty: Option<&Ty>) -> String {
+        match expr {
+            Expr::If { cond, then_branch, else_branch, .. } => {
+                let c = self.emit_expr_bare(cond);
+                let t = self.emit_expr_as_block_ret(then_branch, ret_ty);
+                match else_branch {
+                    None    => format!("if {c} {t}"),
+                    Some(e) => format!("if {c} {t} else {}", self.emit_expr_as_block_ret(e, ret_ty)),
+                }
+            }
+            Expr::Match { scrutinee, arms, .. } => {
+                let s = self.emit_expr(scrutinee);
+                let arms_str = arms.iter()
+                    .map(|arm| format!("    {} => {},", self.emit_expr(&arm.pattern), self.emit_expr_as_block_ret(&arm.body, ret_ty)))
+                    .collect::<Vec<_>>().join("\n");
+                format!("match {s} {{\n{arms_str}\n}}")
+            }
+            Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, ret_ty)),
+            _ => self.emit_expr(expr),
         }
     }
 }
@@ -538,6 +674,19 @@ fn strip_outer_parens(s: String) -> String {
         if matched { return s[1..s.len()-1].to_string(); }
     }
     s
+}
+
+fn is_single_arg(s: &str) -> bool {
+    let mut depth = 0i32;
+    for c in s.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => return false,
+            _ => {}
+        }
+    }
+    true
 }
 
 fn emit_str(s: &str) -> String {
@@ -629,4 +778,134 @@ fn strip_bounds(generics: &str) -> String {
         .map(|p| p.trim().split(':').next().unwrap_or("").trim().to_string())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{lexer, parser, semantic};
+
+    fn transpile(src: &str) -> String {
+        let tokens = lexer::lex(src).expect("lex failed");
+        let ast    = parser::parse(&tokens).expect("parse failed");
+        let ast    = semantic::analyze(ast).expect("semantic failed");
+        emit(&ast)
+    }
+
+    // ── top-level const ───────────────────────────────────────────────────────
+
+    #[test]
+    fn const_str_literal() {
+        let out = transpile(r#"const RESET = "\x1b[0m""#);
+        assert!(out.contains(r#"const RESET: &str = "\x1b[0m";"#), "got: {out}");
+    }
+
+    #[test]
+    fn const_int_literal() {
+        let out = transpile("const MAX = 42");
+        assert!(out.contains("const MAX: i64 = 42;"), "got: {out}");
+    }
+
+    // ── unified str type ──────────────────────────────────────────────────────
+
+    #[test]
+    fn str_param_becomes_ref_str() {
+        let out = transpile("fn greet(name: str) -> bool\n    true");
+        assert!(out.contains("name: &str"), "got: {out}");
+    }
+
+    #[test]
+    fn str_return_becomes_string() {
+        let out = transpile("fn greet(name: str) -> str\n    \"hello\"");
+        assert!(out.contains("-> String"), "got: {out}");
+    }
+
+    #[test]
+    fn str_field_becomes_string() {
+        let out = transpile("struct Foo\n    label: str");
+        assert!(out.contains("label: String"), "got: {out}");
+    }
+
+    #[test]
+    fn vec_str_becomes_vec_string() {
+        let out = transpile("fn main()\n    let v: Vec<str> = vec![]");
+        assert!(out.contains("Vec<String>"), "got: {out}");
+    }
+
+    #[test]
+    fn str_constructor_becomes_string_new() {
+        let out = transpile("fn main()\n    let s = str()");
+        assert!(out.contains("String::new()") || out.contains("String::default()"), "got: {out}");
+    }
+
+    // ── default / uninit bindings ─────────────────────────────────────────────
+
+    #[test]
+    fn mut_typed_default_initializes() {
+        let out = transpile("fn main()\n    mut lines: Vec<str>");
+        assert!(out.contains("let mut lines: Vec<String> = Default::default();"), "got: {out}");
+    }
+
+    #[test]
+    fn mut_typed_tilde_is_uninit() {
+        let out = transpile("fn main()\n    mut buf: Vec<u8> ~");
+        assert!(out.contains("let mut buf: Vec<u8>;"), "got: {out}");
+        assert!(!out.contains("default"), "should not have initializer, got: {out}");
+    }
+
+    #[test]
+    fn let_typed_default_initializes() {
+        let out = transpile("fn main()\n    let x: i32");
+        assert!(out.contains("let x: i32 = Default::default();"), "got: {out}");
+    }
+
+    // ── format macro ergonomics ───────────────────────────────────────────────
+
+    #[test]
+    fn println_single_expr_autowraps() {
+        let out = transpile("fn main()\n    let x = 1\n    println!(x)");
+        assert!(out.contains(r#"println!("{}", x)"#), "got: {out}");
+    }
+
+    #[test]
+    fn println_string_literal_unchanged() {
+        let out = transpile(r#"fn main()
+    println!("hello")"#);
+        assert!(out.contains(r#"println!("hello")"#), "got: {out}");
+    }
+
+    #[test]
+    fn eprintln_single_expr_autowraps() {
+        let out = transpile("fn main()\n    let msg = str()\n    eprintln!(msg)");
+        assert!(out.contains(r#"eprintln!("{}", msg)"#), "got: {out}");
+    }
+
+    // ── auto-ref ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn stdlib_contains_autorefs_arg() {
+        let out = transpile("fn main()\n    let kws = vec![\"fn\"]\n    let word = str()\n    kws.contains(word)");
+        assert!(out.contains("kws.contains(&word)"), "got: {out}");
+    }
+
+    #[test]
+    fn index_expr_autorefs_in_fn_call() {
+        let out = transpile("fn main()\n    let args: Vec<str> = vec![]\n    let s = str()\n    s.push_str(args[0])");
+        assert!(out.contains("&args[0]"), "got: {out}");
+    }
+
+    // ── str return coercion ───────────────────────────────────────────────────
+
+    #[test]
+    fn str_return_coerces_literal() {
+        let out = transpile("fn label() -> str\n    \"hello\"");
+        assert!(out.contains(r#""hello".to_string()"#), "got: {out}");
+    }
+
+    #[test]
+    fn str_return_coerces_in_if_branch() {
+        let out = transpile("fn f(x: bool) -> str\n    if x\n        return \"yes\"\n    \"no\"");
+        assert!(out.contains(r#""yes".to_string()"#), "got: {out}");
+        assert!(out.contains(r#""no".to_string()"#), "got: {out}");
+    }
 }

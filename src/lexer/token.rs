@@ -72,6 +72,7 @@ pub enum Token {
     Pipe,        // |
     AndAnd,      // &&
     PipePipe,    // ||
+    Tilde,       // ~  (uninitialized binding marker)
 
     // Delimiters
     LParen,

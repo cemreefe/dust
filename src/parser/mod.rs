@@ -94,6 +94,7 @@ impl<'a> Parser<'a> {
             Token::KwTrait  => { self.advance(); self.parse_trait(line, col) }
             Token::KwEnum   => { self.advance(); self.parse_enum(line, col) }
             Token::KwUse    => { self.advance(); self.parse_use(line, col) }
+            Token::KwConst  => { self.advance(); self.parse_const(line, col) }
             tok => Err(DustError::new(
                 format!("unexpected token at top level: {:?}", tok),
                 line, col,
@@ -220,6 +221,14 @@ impl<'a> Parser<'a> {
         }
         self.expect(&Token::Dedent)?;
         Ok(Item::Enum { name, variants, line, col })
+    }
+
+    fn parse_const(&mut self, line: usize, col: usize) -> Result<Item> {
+        let name = self.expect_ident()?;
+        self.expect(&Token::Eq)?;
+        let value = self.parse_expr()?;
+        self.skip_newlines();
+        Ok(Item::Const { name, value, line, col })
     }
 
     fn parse_use(&mut self, line: usize, col: usize) -> Result<Item> {
@@ -418,6 +427,27 @@ impl<'a> Parser<'a> {
     fn parse_binding(&mut self, kind: BindKind, line: usize, col: usize) -> Result<Stmt> {
         let name = self.expect_ident()?;
         let ty = if self.eat(&Token::Colon) { Some(self.parse_ty()?) } else { None };
+
+        // `mut x: T ~`  → uninitialized
+        if self.eat(&Token::Tilde) {
+            self.skip_newlines();
+            return Ok(match kind {
+                BindKind::Let   => Stmt::Let   { name, ty, value: Expr::Ident { name: "~uninit~".into(), line, col }, line, col },
+                BindKind::Const => Stmt::Const { name, ty, value: Expr::Ident { name: "~uninit~".into(), line, col }, line, col },
+                BindKind::Mut   => Stmt::Mut   { name, ty, value: Expr::Ident { name: "~uninit~".into(), line, col }, line, col },
+            });
+        }
+
+        // `mut x: T`  → default initialize
+        if !matches!(self.peek(), Token::Eq) && ty.is_some() {
+            self.skip_newlines();
+            return Ok(match kind {
+                BindKind::Let   => Stmt::Let   { name, ty, value: Expr::Ident { name: "~default~".into(), line, col }, line, col },
+                BindKind::Const => Stmt::Const { name, ty, value: Expr::Ident { name: "~default~".into(), line, col }, line, col },
+                BindKind::Mut   => Stmt::Mut   { name, ty, value: Expr::Ident { name: "~default~".into(), line, col }, line, col },
+            });
+        }
+
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
         self.skip_newlines();

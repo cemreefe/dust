@@ -35,7 +35,7 @@ fn analyze_item(item: &mut Item) -> Result<()> {
                 }
             }
         }
-        Item::Trait { .. } | Item::Enum { .. } | Item::Use { .. } => {}
+        Item::Trait { .. } | Item::Enum { .. } | Item::Use { .. } | Item::Const { .. } => {}
     }
     Ok(())
 }

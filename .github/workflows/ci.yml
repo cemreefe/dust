@@ -54,7 +54,7 @@ jobs:
       - name: Compile examples
         run: |
           dust compile examples/hello.dust
-          dust compile examples/stack.dust
+          dust compile examples/shapes.dust
           dust compile examples/rpn.dust
           dust compile examples/caesar.dust
           dust compile examples/wordfreq.dust

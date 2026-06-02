@@ -222,6 +222,7 @@ pub struct Variant {
 /// Top-level items
 #[derive(Debug, Clone)]
 pub enum Item {
+    Const { name: String, value: Expr, line: usize, col: usize },
     Fn {
         name: String,
         generics: String,

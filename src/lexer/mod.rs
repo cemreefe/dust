@@ -95,10 +95,21 @@ impl Lexer {
 
     fn lex_string(&mut self, line: usize, col: usize) -> Result<Token> {
         let mut s = String::new();
+        // col is 1-based column of the opening "; strip that many spaces from continuation lines
+        let base_indent = col;
         loop {
             match self.advance() {
                 None => return Err(DustError::new("unterminated string", line, col)),
                 Some('"') => break,
+                Some('\n') => {
+                    s.push('\n');
+                    // strip leading spaces up to base_indent from the continuation line
+                    let mut stripped = 0;
+                    while stripped < base_indent && self.peek() == Some(' ') {
+                        self.advance();
+                        stripped += 1;
+                    }
+                }
                 Some('\\') => match self.advance() {
                     Some('n')  => s.push('\n'),
                     Some('r')  => s.push('\r'),
@@ -106,6 +117,11 @@ impl Lexer {
                     Some('"')  => s.push('"'),
                     Some('\\') => s.push('\\'),
                     Some('0')  => s.push('\0'),
+                    Some('x')  => {
+                        let hi = self.advance().and_then(|c| c.to_digit(16)).unwrap_or(0);
+                        let lo = self.advance().and_then(|c| c.to_digit(16)).unwrap_or(0);
+                        s.push(char::from_u32(hi * 16 + lo).unwrap_or('\0'));
+                    }
                     _ => return Err(DustError::new("invalid escape sequence", self.line, self.col)),
                 },
                 Some(c) => s.push(c),
@@ -222,6 +238,7 @@ impl Lexer {
                         '*' => if self.peek() == Some('=') { self.advance(); Token::StarEq } else { Token::Star },
                         '/' => if self.peek() == Some('=') { self.advance(); Token::SlashEq } else { Token::Slash },
                         '%' => Token::Percent,
+                        '~' => Token::Tilde,
                         '(' => Token::LParen,
                         ')' => Token::RParen,
                         '[' => Token::LBracket,
@@ -380,6 +397,14 @@ mod tests {
         let toks = tokens(src);
         assert!(toks.contains(&Token::Indent), "expected Indent in {:?}", toks);
         assert!(toks.contains(&Token::Dedent), "expected Dedent in {:?}", toks);
+    }
+
+    #[test]
+    fn lex_multiline_string() {
+        // continuation indent stripped up to column of opening "
+        let src = "let s = \"line one\n         line two\"";
+        let toks = tokens(src);
+        assert!(toks.contains(&Token::Str("line one\nline two".into())), "got: {:?}", toks);
     }
 
     #[test]

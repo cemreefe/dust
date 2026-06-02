@@ -3,12 +3,12 @@ use std::io
 use std::io::BufRead
 
 struct WordCounter
-  counts: HashMap<String, usize>
+  counts: HashMap<str, usize>
 
   fn add(self, word: str)
     *self.counts.entry(word.to_lowercase()).or_insert(0) += 1
 
-  fn top(keep self, n: usize) -> Vec<(String, usize)>
+  fn top(keep self, n: usize) -> Vec<(str, usize)>
     mut pairs: Vec<_> = self.counts.into_iter().collect()
     pairs.sort_by(a, b -> b.1.cmp(a.1))
     pairs.into_iter().take(n).collect()

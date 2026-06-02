@@ -7,18 +7,18 @@ enum Shape
 
 fn area(shape: Shape) -> f64
   match shape
-    Circle(r)      -> PI * r * r
-    Rect(w, h)     -> w * h
-    Triangle(b, h) -> 0.5 * b * h
+    Circle(radius)         -> PI * radius * radius
+    Rect(width, height)    -> width * height
+    Triangle(base, height) -> 0.5 * base * height
 
 fn describe(shape: Shape) -> str
   match shape
-    Circle(r)      -> "circle with radius {r}"
-    Rect(w, h)     -> "rectangle {w}x{h}"
-    Triangle(b, h) -> "triangle base={b} height={h}"
+    Circle(radius)         -> "circle with radius {radius}"
+    Rect(width, height)    -> "rectangle {width}x{height}"
+    Triangle(base, height) -> "triangle base={base} height={height}"
 
 fn main()
   let shapes = vec![Shape::Circle(3.0), Shape::Rect(4.0, 5.0), Shape::Triangle(6.0, 8.0)]
   for shape in shapes
-    let a = area(shape)
-    println!("{describe(shape)}: area = {a:.2}")
+    let area = area(shape)
+    println!("{describe(shape)}: area = {area:.2}")

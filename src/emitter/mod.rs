@@ -60,12 +60,24 @@ fn is_str_ret(ty: Option<&Ty>) -> bool {
     matches!(ty, Some(Ty::Simple(s)) if s == "str")
 }
 
+/// Methods on `str`/`&str` that return a `&str` slice — callers need `.to_string()` in owned position.
+const STR_SLICE_METHODS: &[&str] = &[
+    "trim", "trim_start", "trim_end",
+    "trim_matches", "trim_start_matches", "trim_end_matches",
+    "as_str",
+];
+
 fn needs_owned_coerce(expr: &Expr) -> bool {
     match expr {
         // Non-interpolated string literals are &str — need .to_string() for String return
         Expr::Str(s) => extract_str_args(s).1.is_empty(),
         // Variables and field accesses may hold &str — coerce conservatively
         Expr::Ident { .. } | Expr::FieldAccess { .. } | Expr::Index { .. } => true,
+        // Method calls that return &str slices of their receiver
+        Expr::Call { func, .. } => matches!(
+            func.as_ref(),
+            Expr::FieldAccess { field, .. } if STR_SLICE_METHODS.contains(&field.as_str())
+        ),
         _ => false,
     }
 }
@@ -657,12 +669,30 @@ fn emit_ty_owned(ty: &Ty) -> String {
         Ty::Simple(s) if s == "str" => "String".into(),
         Ty::Simple(s) => s.clone(),
         Ty::Generic(name, args) => {
-            let inner = args.iter().map(emit_ty_owned).collect::<Vec<_>>().join(", ");
+            let inner = args.iter().map(|a| emit_ty_generic_arg(name, a)).collect::<Vec<_>>().join(", ");
             format!("{name}<{inner}>")
         }
         Ty::Tuple(elems) => format!("({})", elems.iter().map(emit_ty_owned).collect::<Vec<_>>().join(", ")),
         Ty::Ref(inner)   => format!("&{}", emit_ty_ref(inner)),
         Ty::SelfTy       => "Self".into(),
+    }
+}
+
+/// Emit a type as a generic argument. `str` inside slice-like containers
+/// (Vec, Option, Result, Box, …) becomes `&str`; inside map/set containers
+/// it stays `String` so keys remain owned.
+fn emit_ty_generic_arg(outer: &str, ty: &Ty) -> String {
+    const BORROW_CONTAINERS: &[&str] = &["Vec", "Option", "Result", "Box", "Rc", "Arc", "Cow"];
+    match ty {
+        Ty::Simple(s) if s == "str" => {
+            if BORROW_CONTAINERS.contains(&outer) { "&str".into() } else { "String".into() }
+        }
+        Ty::Generic(inner_name, inner_args) => {
+            let inner = inner_args.iter().map(|a| emit_ty_generic_arg(inner_name, a)).collect::<Vec<_>>().join(", ");
+            format!("{inner_name}<{inner}>")
+        }
+        Ty::Tuple(elems) => format!("({})", elems.iter().map(emit_ty_owned).collect::<Vec<_>>().join(", ")),
+        _ => emit_ty_owned(ty),
     }
 }
 
@@ -845,9 +875,9 @@ mod tests {
     }
 
     #[test]
-    fn vec_str_becomes_vec_string() {
+    fn vec_str_becomes_vec_ref_str() {
         let out = transpile("fn main()\n    let v: Vec<str> = vec![]");
-        assert!(out.contains("Vec<String>"), "got: {out}");
+        assert!(out.contains("Vec<&str>"), "got: {out}");
     }
 
     #[test]
@@ -861,7 +891,7 @@ mod tests {
     #[test]
     fn mut_typed_default_initializes() {
         let out = transpile("fn main()\n    mut lines: Vec<str>");
-        assert!(out.contains("let mut lines: Vec<String> = Default::default();"), "got: {out}");
+        assert!(out.contains("let mut lines: Vec<&str> = Default::default();"), "got: {out}");
     }
 
     #[test]

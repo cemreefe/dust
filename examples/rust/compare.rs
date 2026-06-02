@@ -1,0 +1,64 @@
+use std::fs;
+
+struct Stats {
+    lines: usize,
+    chars: usize,
+    tokens: usize,
+}
+
+impl Stats {
+    fn analyze(path: &str) -> Stats {
+        let content = fs::read_to_string(path).unwrap();
+        let lines = content.lines().filter(|line| !line.trim().is_empty()).count();
+        let chars = content.len();
+        let tokens = count_tokens(&content);
+        Stats { lines, chars, tokens }
+    }
+}
+
+fn count_tokens(content: &str) -> usize {
+    let mut count: usize = 0;
+    let mut in_word = false;
+    for ch in content.chars() {
+        if ch.is_alphanumeric() || ch == '_' {
+            if !in_word {
+                count += 1;
+                in_word = true;
+            }
+        } else {
+            in_word = false;
+            if !ch.is_whitespace() {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn percent(dust_val: usize, rust_val: usize) -> f64 {
+    (1.0 - dust_val as f64 / rust_val as f64) * 100.0
+}
+
+fn print_row(name: &str, metric: &str, dust_val: usize, rust_val: usize) {
+    let percent_ = percent(dust_val, rust_val);
+    println!("{name:<12} {metric:<8} {dust_val:>5} {rust_val:>5} {percent_:>5.0}%");
+}
+
+fn compare(name: &str, dust_path: &str, rust_path: &str) {
+    let dust_stats = Stats::analyze(dust_path);
+    let rust_stats = Stats::analyze(rust_path);
+    print_row(name, "lines",  dust_stats.lines,  rust_stats.lines);
+    print_row(name, "chars",  dust_stats.chars,  rust_stats.chars);
+    print_row(name, "tokens", dust_stats.tokens, rust_stats.tokens);
+    println!("");
+}
+
+fn main() {
+    println!("{:<12} {:<8} {:>5} {:>5} {:>6}", "Program", "Metric", "Dust", "Rust", "−%");
+    println!("{}", "─".repeat(42));
+    compare("Shapes",    "examples/shapes.dust",   "examples/rust/shapes.rs");
+    compare("RPN calc",  "examples/rpn.dust",      "examples/rust/rpn.rs");
+    compare("Word freq", "examples/wordfreq.dust", "examples/rust/wordfreq.rs");
+    compare("Caesar",    "examples/caesar.dust",   "examples/rust/caesar.rs");
+    compare("Compare",   "examples/compare.dust",  "examples/rust/compare.rs");
+}

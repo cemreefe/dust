@@ -697,13 +697,18 @@ impl<'a> Parser<'a> {
                     }
                     self.expect(&Token::Dedent)?;
                     Ok(Expr::StructLit { name, fields, line, col })
-                // Inline struct literal: Name { field: value, ... }
+                // Inline struct literal: Name { field: value, ... } or Name { field, ... }
                 } else if self.eat(&Token::LBrace) {
                     let mut fields = Vec::new();
                     while !matches!(self.peek(), Token::RBrace | Token::Eof) {
+                        let fl = self.line(); let fc = self.col();
                         let fname = self.expect_ident()?;
-                        self.expect(&Token::Colon)?;
-                        let fval = self.parse_expr()?;
+                        // shorthand: `{ field }` == `{ field: field }`
+                        let fval = if self.eat(&Token::Colon) {
+                            self.parse_expr()?
+                        } else {
+                            Expr::Ident { name: fname.clone(), line: fl, col: fc }
+                        };
                         fields.push((fname, fval));
                         self.eat(&Token::Comma);
                     }

@@ -115,7 +115,18 @@ impl Emitter {
             Item::Use { path, .. } => format!("use {};", path),
             Item::Const { name, value, .. } => {
                 let (ty, val) = match value {
-                    Expr::Str(s)   => ("&str".to_string(), format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))),
+                    Expr::Str(s)   => {
+                        let escaped: String = s.chars().map(|c| match c {
+                            '\n' => "\\n".to_string(),
+                            '\r' => "\\r".to_string(),
+                            '\t' => "\\t".to_string(),
+                            '"'  => "\\\"".to_string(),
+                            '\\' => "\\\\".to_string(),
+                            c if (c as u32) < 0x20 => format!("\\x{:02x}", c as u32),
+                            c    => c.to_string(),
+                        }).collect();
+                        ("&str".to_string(), format!("\"{escaped}\""))
+                    }
                     Expr::Int(n)   => ("i64".to_string(), n.to_string()),
                     Expr::Float(f) => ("f64".to_string(), format!("{f}")),
                     Expr::Bool(b)  => ("bool".to_string(), b.to_string()),
@@ -758,4 +769,134 @@ fn strip_bounds(generics: &str) -> String {
         .map(|p| p.trim().split(':').next().unwrap_or("").trim().to_string())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{lexer, parser, semantic};
+
+    fn transpile(src: &str) -> String {
+        let tokens = lexer::lex(src).expect("lex failed");
+        let ast    = parser::parse(&tokens).expect("parse failed");
+        let ast    = semantic::analyze(ast).expect("semantic failed");
+        emit(&ast)
+    }
+
+    // ── top-level const ───────────────────────────────────────────────────────
+
+    #[test]
+    fn const_str_literal() {
+        let out = transpile(r#"const RESET = "\x1b[0m""#);
+        assert!(out.contains(r#"const RESET: &str = "\x1b[0m";"#), "got: {out}");
+    }
+
+    #[test]
+    fn const_int_literal() {
+        let out = transpile("const MAX = 42");
+        assert!(out.contains("const MAX: i64 = 42;"), "got: {out}");
+    }
+
+    // ── unified str type ──────────────────────────────────────────────────────
+
+    #[test]
+    fn str_param_becomes_ref_str() {
+        let out = transpile("fn greet(name: str) -> bool\n    true");
+        assert!(out.contains("name: &str"), "got: {out}");
+    }
+
+    #[test]
+    fn str_return_becomes_string() {
+        let out = transpile("fn greet(name: str) -> str\n    \"hello\"");
+        assert!(out.contains("-> String"), "got: {out}");
+    }
+
+    #[test]
+    fn str_field_becomes_string() {
+        let out = transpile("struct Foo\n    label: str");
+        assert!(out.contains("label: String"), "got: {out}");
+    }
+
+    #[test]
+    fn vec_str_becomes_vec_string() {
+        let out = transpile("fn main()\n    let v: Vec<str> = vec![]");
+        assert!(out.contains("Vec<String>"), "got: {out}");
+    }
+
+    #[test]
+    fn str_constructor_becomes_string_new() {
+        let out = transpile("fn main()\n    let s = str()");
+        assert!(out.contains("String::new()") || out.contains("String::default()"), "got: {out}");
+    }
+
+    // ── default / uninit bindings ─────────────────────────────────────────────
+
+    #[test]
+    fn mut_typed_default_initializes() {
+        let out = transpile("fn main()\n    mut lines: Vec<str>");
+        assert!(out.contains("let mut lines: Vec<String> = Default::default();"), "got: {out}");
+    }
+
+    #[test]
+    fn mut_typed_tilde_is_uninit() {
+        let out = transpile("fn main()\n    mut buf: Vec<u8> ~");
+        assert!(out.contains("let mut buf: Vec<u8>;"), "got: {out}");
+        assert!(!out.contains("default"), "should not have initializer, got: {out}");
+    }
+
+    #[test]
+    fn let_typed_default_initializes() {
+        let out = transpile("fn main()\n    let x: i32");
+        assert!(out.contains("let x: i32 = Default::default();"), "got: {out}");
+    }
+
+    // ── format macro ergonomics ───────────────────────────────────────────────
+
+    #[test]
+    fn println_single_expr_autowraps() {
+        let out = transpile("fn main()\n    let x = 1\n    println!(x)");
+        assert!(out.contains(r#"println!("{}", x)"#), "got: {out}");
+    }
+
+    #[test]
+    fn println_string_literal_unchanged() {
+        let out = transpile(r#"fn main()
+    println!("hello")"#);
+        assert!(out.contains(r#"println!("hello")"#), "got: {out}");
+    }
+
+    #[test]
+    fn eprintln_single_expr_autowraps() {
+        let out = transpile("fn main()\n    let msg = str()\n    eprintln!(msg)");
+        assert!(out.contains(r#"eprintln!("{}", msg)"#), "got: {out}");
+    }
+
+    // ── auto-ref ──────────────────────────────────────────────────────────────
+
+    #[test]
+    fn stdlib_contains_autorefs_arg() {
+        let out = transpile("fn main()\n    let kws = vec![\"fn\"]\n    let word = str()\n    kws.contains(word)");
+        assert!(out.contains("kws.contains(&word)"), "got: {out}");
+    }
+
+    #[test]
+    fn index_expr_autorefs_in_fn_call() {
+        let out = transpile("fn main()\n    let args: Vec<str> = vec![]\n    let s = str()\n    s.push_str(args[0])");
+        assert!(out.contains("&args[0]"), "got: {out}");
+    }
+
+    // ── str return coercion ───────────────────────────────────────────────────
+
+    #[test]
+    fn str_return_coerces_literal() {
+        let out = transpile("fn label() -> str\n    \"hello\"");
+        assert!(out.contains(r#""hello".to_string()"#), "got: {out}");
+    }
+
+    #[test]
+    fn str_return_coerces_in_if_branch() {
+        let out = transpile("fn f(x: bool) -> str\n    if x\n        return \"yes\"\n    \"no\"");
+        assert!(out.contains(r#""yes".to_string()"#), "got: {out}");
+        assert!(out.contains(r#""no".to_string()"#), "got: {out}");
+    }
 }

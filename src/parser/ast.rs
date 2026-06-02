@@ -43,6 +43,7 @@ pub enum Expr {
     Str(String),    // raw string literal (may contain {name} interpolation)
     Char(char),
     Bool(bool),
+    Tuple(Vec<Expr>),
     Ident { name: String, line: usize, col: usize },
 
     BinOp {

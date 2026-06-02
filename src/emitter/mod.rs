@@ -267,6 +267,9 @@ impl Emitter {
     fn emit_stmt(&self, stmt: &Stmt, is_last: bool, ret_ty: Option<&Ty>) -> String {
         match stmt {
             Stmt::Let { name, ty, value, .. } => {
+                if name.starts_with('(') {
+                    return format!("let {name} = {};", self.emit_expr(value));
+                }
                 let ty_ann = ty.as_ref().map(|t| format!(": {}", emit_ty_owned(t))).unwrap_or_default();
                 if let Expr::Ident { name: sentinel, .. } = value {
                     if sentinel == "~uninit~" {
@@ -413,6 +416,11 @@ impl Emitter {
                     else { format!("{}: {}", p.name, emit_ty_owned(&p.ty)) }
                 }).collect::<Vec<_>>().join(", ");
                 format!("|{ps}| {}", self.emit_expr_bare(body))
+            }
+
+            Expr::Tuple(elems) => {
+                let inner = elems.iter().map(|e| self.emit_expr(e)).collect::<Vec<_>>().join(", ");
+                format!("({inner})")
             }
 
             Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, None)),
@@ -708,18 +716,21 @@ fn strip_outer_parens(s: String) -> String {
         let mut depth = 0usize;
         let chars: Vec<char> = s.chars().collect();
         let mut matched = false;
+        let mut top_level_comma = false;
         for (i, &c) in chars.iter().enumerate() {
             match c {
-                '(' => depth += 1,
-                ')' => {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => {
                     depth -= 1;
                     if depth == 0 && i == chars.len() - 1 { matched = true; }
                     else if depth == 0 { break; }
                 }
+                ',' if depth == 1 => { top_level_comma = true; }
                 _ => {}
             }
         }
-        if matched { return s[1..s.len()-1].to_string(); }
+        // Don't strip if it's a tuple (top-level comma) — parens are structural
+        if matched && !top_level_comma { return s[1..s.len()-1].to_string(); }
     }
     s
 }

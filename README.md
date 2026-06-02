@@ -121,17 +121,17 @@ match status
   _     -> println!("unknown")
 
 match result
-  Ok(v)  -> v
-  Err(e) -> return "failed".to_string()
+  Ok(val)  -> val
+  Err(_)   -> return "failed"
 ```
 
 ### Loops
 
 ```dust
-for item in collection.iter()
+for item in collection
   println!("{item}")
 
-for (key, val) in map.iter()
+for (key, val) in map
   println!("{key}: {val}")
 
 for line in stdin.lock().lines()
@@ -186,7 +186,7 @@ let byte = b'A'        # 65
 fn minmax(v: Vec<i32>) -> (i32, i32)
   ...
 
-for (key, val) in map.iter()
+for (key, val) in map
   ...
 
 let x = pair.0
@@ -242,7 +242,7 @@ struct Point
   is Display
 
   fn Display.fmt(self, mut f: Formatter) -> Result
-    write!(f, "({}, {})", self.x, self.y)
+    write!(f, "({self.x}, {self.y})")
 ```
 
 ## Examples

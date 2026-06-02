@@ -425,7 +425,28 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_binding(&mut self, kind: BindKind, line: usize, col: usize) -> Result<Stmt> {
-        let name = self.expect_ident()?;
+        // Tuple destructuring: let (x, y) = pair  OR  let x, y = pair
+        let name = if self.peek() == &Token::LParen {
+            self.advance();
+            let mut names = Vec::new();
+            loop {
+                names.push(self.expect_ident()?);
+                if !self.eat(&Token::Comma) { break; }
+            }
+            self.expect(&Token::RParen)?;
+            format!("({})", names.join(", "))
+        } else {
+            let first = self.expect_ident()?;
+            if self.peek() == &Token::Comma {
+                let mut names = vec![first];
+                while self.eat(&Token::Comma) {
+                    names.push(self.expect_ident()?);
+                }
+                format!("({})", names.join(", "))
+            } else {
+                first
+            }
+        };
         let ty = if self.eat(&Token::Colon) { Some(self.parse_ty()?) } else { None };
 
         // `mut x: T ~`  → uninitialized
@@ -828,11 +849,22 @@ impl<'a> Parser<'a> {
                 self.advance();
                 if matches!(self.peek(), Token::RParen) {
                     self.advance();
-                    return Ok(Expr::Block { stmts: vec![], line, col });
+                    return Ok(Expr::Tuple(vec![]));
                 }
-                let inner = self.parse_expr()?;
-                self.expect(&Token::RParen)?;
-                Ok(inner)
+                let first = self.parse_expr()?;
+                if self.eat(&Token::Comma) {
+                    // tuple literal: (e1, e2, ...)
+                    let mut elems = vec![first];
+                    while !matches!(self.peek(), Token::RParen | Token::Eof) {
+                        elems.push(self.parse_expr()?);
+                        if !self.eat(&Token::Comma) { break; }
+                    }
+                    self.expect(&Token::RParen)?;
+                    Ok(Expr::Tuple(elems))
+                } else {
+                    self.expect(&Token::RParen)?;
+                    Ok(first)
+                }
             }
 
             tok => Err(DustError::new(format!("unexpected token in expression: {:?}", tok), line, col)),

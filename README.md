@@ -252,13 +252,13 @@ struct Point
 
 | File | Description |
 |------|-------------|
-| `examples/hello.dust` | Hello world |
-| `examples/shapes.dust` | Shapes enum |
-| `examples/rpn.dust` | RPN calculator (stdin) |
-| `examples/caesar.dust` | Caesar cipher (stdin) |
-| `examples/wordfreq.dust` | Word frequency counter (stdin) |
-| `examples/compare.dust` | Dust vs Rust comparison script |
-| `examples/todo_server.dust` | HTTP todo server with web frontend |
+| [examples/hello.dust](examples/hello.dust) | Hello world |
+| [examples/shapes.dust](examples/shapes.dust) | Shapes enum |
+| [examples/rpn.dust](examples/rpn.dust) | RPN calculator (stdin) |
+| [examples/caesar.dust](examples/caesar.dust) | Caesar cipher (stdin) |
+| [examples/wordfreq.dust](examples/wordfreq.dust) | Word frequency counter (stdin) |
+| [examples/compare.dust](examples/compare.dust) | Dust vs Rust comparison script |
+| [examples/todo_server.dust](examples/todo_server.dust) | HTTP todo server with web frontend |
 
 ## How it works
 

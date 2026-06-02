@@ -95,10 +95,21 @@ impl Lexer {
 
     fn lex_string(&mut self, line: usize, col: usize) -> Result<Token> {
         let mut s = String::new();
+        // col is 1-based column of the opening "; strip that many spaces from continuation lines
+        let base_indent = col;
         loop {
             match self.advance() {
                 None => return Err(DustError::new("unterminated string", line, col)),
                 Some('"') => break,
+                Some('\n') => {
+                    s.push('\n');
+                    // strip leading spaces up to base_indent from the continuation line
+                    let mut stripped = 0;
+                    while stripped < base_indent && self.peek() == Some(' ') {
+                        self.advance();
+                        stripped += 1;
+                    }
+                }
                 Some('\\') => match self.advance() {
                     Some('n')  => s.push('\n'),
                     Some('r')  => s.push('\r'),
@@ -386,6 +397,14 @@ mod tests {
         let toks = tokens(src);
         assert!(toks.contains(&Token::Indent), "expected Indent in {:?}", toks);
         assert!(toks.contains(&Token::Dedent), "expected Dedent in {:?}", toks);
+    }
+
+    #[test]
+    fn lex_multiline_string() {
+        // continuation indent stripped up to column of opening "
+        let src = "let s = \"line one\n         line two\"";
+        let toks = tokens(src);
+        assert!(toks.contains(&Token::Str("line one\nline two".into())), "got: {:?}", toks);
     }
 
     #[test]

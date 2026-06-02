@@ -129,14 +129,14 @@ match result
 
 ```dust
 for item in collection
-  println!("{item}")
+  println!(item)
 
 for (key, val) in map
   println!("{key}: {val}")
 
 for line in stdin.lock().lines()
   let line = line.unwrap!
-  println!("{line}")
+  println!(line)
 ```
 
 ### Operators

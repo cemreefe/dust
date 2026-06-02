@@ -12,6 +12,7 @@ struct SigTable {
     fns:     HashMap<String, Vec<bool>>, // fn_name  → [should_ref per arg]
     methods: HashMap<String, Vec<bool>>, // method_name → [should_ref per arg]
     structs_with_new: std::collections::HashSet<String>, // structs with explicit fn new
+    struct_fields: HashMap<String, HashMap<String, Ty>>, // struct_name → field_name → Ty
 }
 
 fn should_ref_param(p: &Param) -> bool {
@@ -24,12 +25,17 @@ fn build_sig_table(items: &[Item]) -> SigTable {
     let mut fns     = HashMap::new();
     let mut methods = HashMap::new();
     let mut structs_with_new = std::collections::HashSet::new();
+    let mut struct_fields = HashMap::new();
     for item in items {
         match item {
             Item::Fn { name, params, .. } => {
                 fns.insert(name.clone(), params.iter().map(should_ref_param).collect());
             }
-            Item::Struct { name, methods: meths, .. } => {
+            Item::Struct { name, fields, methods: meths, .. } => {
+                struct_fields.insert(
+                    name.clone(),
+                    fields.iter().map(|f| (f.name.clone(), f.ty.clone())).collect(),
+                );
                 for m in meths {
                     methods.insert(m.name.clone(), m.params.iter().map(should_ref_param).collect());
                     if m.name == "new" {
@@ -40,7 +46,7 @@ fn build_sig_table(items: &[Item]) -> SigTable {
             _ => {}
         }
     }
-    SigTable { fns, methods, structs_with_new }
+    SigTable { fns, methods, structs_with_new, struct_fields }
 }
 
 fn is_str_ret(ty: Option<&Ty>) -> bool {
@@ -355,8 +361,12 @@ impl Emitter {
             }
 
             Expr::StructLit { name, fields, .. } => {
+                let field_types = self.sig.struct_fields.get(name.as_str());
                 let fs = fields.iter()
-                    .map(|(k, v)| format!("{k}: {}", self.emit_expr(v)))
+                    .map(|(k, v)| {
+                        let ty = field_types.and_then(|m| m.get(k.as_str()));
+                        format!("{k}: {}", self.emit_expr_bare_owned(v, ty))
+                    })
                     .collect::<Vec<_>>().join(", ");
                 format!("{name} {{ {fs} }}")
             }

@@ -359,6 +359,13 @@ impl Emitter {
             Expr::Path { segments, .. } => segments.join("::"),
 
             Expr::BinOp { op, left, right, .. } => {
+                if matches!(op, BinOp::Pow) {
+                    let base = self.emit_expr(left);
+                    let exp  = self.emit_expr(right);
+                    // Use powi for integer literals, powf otherwise
+                    let method = if matches!(right.as_ref(), Expr::Int(_)) { "powi" } else { "powf" };
+                    return format!("{base}.{method}({exp})");
+                }
                 let op_str = match op {
                     BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
                     BinOp::Div => "/", BinOp::Mod => "%",
@@ -367,6 +374,7 @@ impl Emitter {
                     BinOp::LtEq => "<=", BinOp::GtEq => ">=",
                     BinOp::And => "&&", BinOp::Or    => "||",
                     BinOp::Assign => "=",
+                    BinOp::Pow => unreachable!(),
                 };
                 format!("({} {} {})", self.emit_expr(left), op_str, self.emit_expr(right))
             }

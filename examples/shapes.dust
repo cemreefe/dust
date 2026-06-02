@@ -7,7 +7,7 @@ enum Shape
 
 fn area(shape: Shape) -> f64
   match shape
-    Circle(radius)         -> PI * radius * radius
+    Circle(radius)         -> PI * radius ** 2
     Rect(width, height)    -> width * height
     Triangle(base, height) -> 0.5 * base * height
 

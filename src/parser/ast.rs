@@ -134,7 +134,7 @@ pub enum Expr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Mod,
+    Add, Sub, Mul, Div, Mod, Pow,
     Eq, NotEq, Lt, Gt, LtEq, GtEq,
     And, Or,
     Assign,

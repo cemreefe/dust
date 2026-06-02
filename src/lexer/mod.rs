@@ -235,7 +235,9 @@ impl Lexer {
                         '+' => if self.peek() == Some('+') { self.advance(); Token::PlusPlus }
                                else if self.peek() == Some('=') { self.advance(); Token::PlusEq }
                                else { Token::Plus },
-                        '*' => if self.peek() == Some('=') { self.advance(); Token::StarEq } else { Token::Star },
+                        '*' => if self.peek() == Some('*') { self.advance(); Token::StarStar }
+               else if self.peek() == Some('=') { self.advance(); Token::StarEq }
+               else { Token::Star },
                         '/' => if self.peek() == Some('=') { self.advance(); Token::SlashEq } else { Token::Slash },
                         '%' => Token::Percent,
                         '~' => Token::Tilde,

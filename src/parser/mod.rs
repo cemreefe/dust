@@ -542,7 +542,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_mul(&mut self) -> Result<Expr> {
-        let mut left = self.parse_unary()?;
+        let mut left = self.parse_pow()?;
         loop {
             let line = self.line(); let col = self.col();
             let op = match self.peek() {
@@ -552,10 +552,22 @@ impl<'a> Parser<'a> {
                 _ => break,
             };
             self.advance();
-            let right = self.parse_unary()?;
+            let right = self.parse_pow()?;
             left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right), line, col };
         }
         Ok(left)
+    }
+
+    fn parse_pow(&mut self) -> Result<Expr> {
+        let base = self.parse_unary()?;
+        let line = self.line(); let col = self.col();
+        if self.eat(&Token::StarStar) {
+            // right-associative: recurse into parse_pow
+            let exp = self.parse_pow()?;
+            Ok(Expr::BinOp { op: BinOp::Pow, left: Box::new(base), right: Box::new(exp), line, col })
+        } else {
+            Ok(base)
+        }
     }
 
     fn parse_unary(&mut self) -> Result<Expr> {

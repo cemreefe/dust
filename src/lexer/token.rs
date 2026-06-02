@@ -54,6 +54,7 @@ pub enum Token {
     Plus,        // +
     Minus,       // -
     Star,        // *
+    StarStar,    // **
     Slash,       // /
     Percent,     // %
     PlusPlus,      // ++

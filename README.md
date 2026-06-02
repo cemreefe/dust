@@ -90,7 +90,7 @@ struct Point
   y: f64
 
   fn distance(self) -> f64
-    (self.x * self.x + self.y * self.y).sqrt()
+    (self.x ** 2 + self.y ** 2).sqrt()
 ```
 
 `fn new` is auto-generated from fields — `Point(3.0, 4.0)` just works.
@@ -145,6 +145,7 @@ for line in stdin.lock().lines()
 x++   x--          # increment / decrement
 x += n   x -= n    # compound assign
 x ||= y  x &&= y   # logical assign
+x ** n              # power (x.powi(n) for int exponent, x.powf(n) for float)
 ```
 
 ### Closures

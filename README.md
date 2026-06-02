@@ -241,8 +241,8 @@ struct Point
   y: f64
   is Display
 
-  fn Display.fmt(self, mut f: Formatter) -> Result
-    write!(f, "({}, {})", self.x, self.y)
+  fn Display.fmt(self, f: Formatter) -> Result
+    write!(f, "({self.x}, {self.y})")
 ```
 
 ## Examples

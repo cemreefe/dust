@@ -224,6 +224,7 @@ pub struct Variant {
 pub enum Item {
     Fn {
         name: String,
+        generics: String,
         is_async: bool,
         params: Vec<Param>,
         ret_ty: Option<Ty>,
@@ -233,6 +234,7 @@ pub enum Item {
     },
     Struct {
         name: String,
+        generics: String,
         traits: Vec<String>,
         fields: Vec<Field>,
         methods: Vec<Method>,
@@ -241,6 +243,7 @@ pub enum Item {
     },
     Trait {
         name: String,
+        generics: String,
         methods: Vec<Method>,
         line: usize,
         col: usize,

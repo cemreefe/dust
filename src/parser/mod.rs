@@ -103,16 +103,18 @@ impl<'a> Parser<'a> {
 
     fn parse_fn(&mut self, is_async: bool, line: usize, col: usize) -> Result<Item> {
         let name = self.expect_ident()?;
+        let generics = self.parse_generic_params();
         let params = self.parse_param_list()?;
         let ret_ty = if self.eat(&Token::Arrow) { Some(self.parse_ty()?) } else { None };
         let body = self.parse_block()?;
-        Ok(Item::Fn { name, is_async, params, ret_ty, body, line, col })
+        Ok(Item::Fn { name, generics, is_async, params, ret_ty, body, line, col })
     }
 
     fn parse_struct(&mut self, line: usize, col: usize) -> Result<Item> {
         let name = self.expect_ident()?;
+        let generics = self.parse_generic_params();
         let traits = if self.eat(&Token::KwIs) {
-            self.parse_comma_separated_idents()?
+            self.parse_trait_list()?
         } else { vec![] };
         self.skip_newlines();
         self.expect(&Token::Indent)?;
@@ -142,7 +144,7 @@ impl<'a> Parser<'a> {
             }
         }
         self.expect(&Token::Dedent)?;
-        Ok(Item::Struct { name, traits, fields, methods, line, col })
+        Ok(Item::Struct { name, generics, traits, fields, methods, line, col })
     }
 
     fn parse_method(&mut self, is_async: bool, line: usize, col: usize) -> Result<Method> {
@@ -163,6 +165,7 @@ impl<'a> Parser<'a> {
 
     fn parse_trait(&mut self, line: usize, col: usize) -> Result<Item> {
         let name = self.expect_ident()?;
+        let generics = self.parse_generic_params();
         self.skip_newlines();
         self.expect(&Token::Indent)?;
         self.skip_newlines();
@@ -189,7 +192,7 @@ impl<'a> Parser<'a> {
             });
         }
         self.expect(&Token::Dedent)?;
-        Ok(Item::Trait { name, methods, line, col })
+        Ok(Item::Trait { name, generics, methods, line, col })
     }
 
     fn parse_enum(&mut self, line: usize, col: usize) -> Result<Item> {
@@ -853,6 +856,50 @@ impl<'a> Parser<'a> {
             names.push(self.expect_ident()?);
         }
         Ok(names)
+    }
+
+    /// Parse `<T>`, `<T, U>`, `<T: Bound + Bound2, U>` etc. Returns the raw inner string.
+    /// Returns empty string if no `<` follows.
+    fn parse_generic_params(&mut self) -> String {
+        if !matches!(self.peek(), Token::Lt) { return String::new(); }
+        self.advance(); // consume <
+        let mut depth = 1usize;
+        let mut out = String::new();
+        loop {
+            match self.peek().clone() {
+                Token::Lt  => { depth += 1; out.push('<'); self.advance(); }
+                Token::Gt  => {
+                    depth -= 1;
+                    if depth == 0 { self.advance(); break; }
+                    out.push('>'); self.advance();
+                }
+                Token::Eof => break,
+                Token::Ident(s)  => { out.push_str(&s); self.advance(); }
+                Token::Comma     => { out.push_str(", "); self.advance(); }
+                Token::Colon     => { out.push_str(": "); self.advance(); }
+                Token::Plus      => { out.push_str(" + "); self.advance(); }
+                Token::Ampersand => { out.push('&'); self.advance(); }
+                Token::KwMut     => { out.push_str("mut "); self.advance(); }
+                _                => { self.advance(); }
+            }
+        }
+        out.trim().to_string()
+    }
+
+    /// Parse a trait list for `is Trait1, Trait2<T>` — handles generic trait names.
+    fn parse_trait_list(&mut self) -> Result<Vec<String>> {
+        let mut traits = Vec::new();
+        loop {
+            let name = self.expect_ident()?;
+            let generics = self.parse_generic_params();
+            if generics.is_empty() {
+                traits.push(name);
+            } else {
+                traits.push(format!("{name}<{generics}>"));
+            }
+            if !self.eat(&Token::Comma) { break; }
+        }
+        Ok(traits)
     }
 
     // ── Turbofish ─────────────────────────────────────────────────────────────

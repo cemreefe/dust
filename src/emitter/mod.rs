@@ -87,35 +87,39 @@ impl Emitter {
 
     fn emit_item(&self, item: &Item) -> String {
         match item {
-            Item::Fn { name, is_async, params, ret_ty, body, .. } =>
-                self.emit_fn(name, *is_async, params, ret_ty.as_ref(), body),
-            Item::Struct { name, traits, fields, methods, .. } =>
-                self.emit_struct(name, traits, fields, methods),
-            Item::Trait { name, methods, .. } => self.emit_trait(name, methods),
+            Item::Fn { name, generics, is_async, params, ret_ty, body, .. } =>
+                self.emit_fn(name, generics, *is_async, params, ret_ty.as_ref(), body),
+            Item::Struct { name, generics, traits, fields, methods, .. } =>
+                self.emit_struct(name, generics, traits, fields, methods),
+            Item::Trait { name, generics, methods, .. } => self.emit_trait(name, generics, methods),
             Item::Enum { name, variants, .. } => emit_enum(name, variants),
             Item::Use { path, .. } => format!("use {};", path),
         }
     }
 
-    fn emit_fn(&self, name: &str, is_async: bool, params: &[Param], ret_ty: Option<&Ty>, body: &[Stmt]) -> String {
+    fn emit_fn(&self, name: &str, generics: &str, is_async: bool, params: &[Param], ret_ty: Option<&Ty>, body: &[Stmt]) -> String {
         let async_kw = if is_async { "async " } else { "" };
+        let gp = if generics.is_empty() { String::new() } else { format!("<{generics}>") };
         let params_str = params.iter().map(emit_param).collect::<Vec<_>>().join(", ");
         let ret = ret_ty.map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
         let body_str = self.emit_block(body);
-        format!("{async_kw}fn {name}({params_str}){ret} {{\n{body_str}}}\n")
+        format!("{async_kw}fn {name}{gp}({params_str}){ret} {{\n{body_str}}}\n")
     }
 
-    fn emit_struct(&self, name: &str, traits: &[String], fields: &[Field], methods: &[Method]) -> String {
+    fn emit_struct(&self, name: &str, generics: &str, traits: &[String], fields: &[Field], methods: &[Method]) -> String {
         let mut out = String::new();
         let own_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_none()).collect();
         let trait_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_some()).collect();
         let has_no_arg_new = own_methods.iter().any(|m| m.name == "new" && m.params.is_empty());
         let has_any_new   = own_methods.iter().any(|m| m.name == "new");
 
-        if !has_no_arg_new && !fields.is_empty() {
+        // Generic structs can't always derive Default without bounds — skip for now
+        if !has_no_arg_new && !fields.is_empty() && generics.is_empty() {
             out.push_str("#[derive(Default)]\n");
         }
-        out.push_str(&format!("struct {name} {{\n"));
+        let gp     = if generics.is_empty() { String::new() } else { format!("<{generics}> ") };
+        let gp_use = if generics.is_empty() { String::new() } else { format!("<{}>", strip_bounds(generics)) };
+        out.push_str(&format!("struct {name}{gp} {{\n"));
         for f in fields {
             out.push_str(&format!("    {}: {},\n", f.name, emit_ty_owned(&f.ty)));
         }
@@ -134,7 +138,7 @@ impl Emitter {
         };
 
         if !own_methods.is_empty() || auto_new.is_some() {
-            out.push_str(&format!("\nimpl {name} {{\n"));
+            out.push_str(&format!("\nimpl{gp} {name}{gp_use} {{\n"));
             if let Some(new_fn) = auto_new {
                 out.push_str(&indent_block(&new_fn));
             }
@@ -146,9 +150,9 @@ impl Emitter {
 
         for trait_name in traits {
             let tmethods: Vec<&Method> = trait_methods.iter()
-                .filter(|m| m.trait_qualifier.as_deref() == Some(trait_name))
+                .filter(|m| m.trait_qualifier.as_deref() == Some(trait_name.split('<').next().unwrap_or(trait_name)))
                 .copied().collect();
-            out.push_str(&format!("\nimpl {trait_name} for {name} {{\n"));
+            out.push_str(&format!("\nimpl{gp} {trait_name} for {name}{gp_use} {{\n"));
             for m in tmethods {
                 out.push_str(&indent_block(&self.emit_method(m)));
             }
@@ -170,8 +174,9 @@ impl Emitter {
         }
     }
 
-    fn emit_trait(&self, name: &str, methods: &[Method]) -> String {
-        let mut out = format!("trait {name} {{\n");
+    fn emit_trait(&self, name: &str, generics: &str, methods: &[Method]) -> String {
+        let gp = if generics.is_empty() { String::new() } else { format!("<{generics}>") };
+        let mut out = format!("trait {name}{gp} {{\n");
         for m in methods {
             out.push_str(&format!("    {}", self.emit_method(m)));
         }
@@ -616,4 +621,12 @@ fn single_to_double_quotes(expr: &str) -> String {
 
 fn indent_block(s: &str) -> String {
     s.lines().map(|l| format!("    {l}\n")).collect()
+}
+
+/// Strip bounds from generic params: `"A: Clone, B: Default"` → `"A, B"`
+fn strip_bounds(generics: &str) -> String {
+    generics.split(',')
+        .map(|p| p.trim().split(':').next().unwrap_or("").trim().to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
 }

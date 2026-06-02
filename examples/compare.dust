@@ -10,10 +10,7 @@ struct Stats
     let lines = content.lines().filter(l -> !l.trim().is_empty()).count()
     let chars = content.len()
     let tokens = count_tokens(content)
-    Stats
-      lines: lines
-      chars: chars
-      tokens: tokens
+    Stats { lines, chars, tokens }
 
 fn count_tokens(content: str) -> usize
   mut count: usize

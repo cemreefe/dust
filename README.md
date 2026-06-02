@@ -242,7 +242,7 @@ struct Point
   is Display
 
   fn Display.fmt(self, f: Formatter) -> Result
-    write!(f, "({}, {})", self.x, self.y)
+    write!(f, "({self.x}, {self.y})")
 ```
 
 ## Examples

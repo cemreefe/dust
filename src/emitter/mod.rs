@@ -93,8 +93,11 @@ fn needs_ref(expr: &Expr) -> bool {
 
 /// Macros whose first argument is a format string.
 const FORMAT_MACROS: &[&str] = &[
-    "println!", "print!", "eprintln!", "eprint!", "format!", "panic!", "write!", "writeln!",
+    "println!", "print!", "eprintln!", "eprint!", "format!", "panic!",
 ];
+
+/// Macros whose second argument is a format string (first is a writer/destination).
+const FORMAT_MACROS_WRITER: &[&str] = &["write!", "writeln!"];
 
 /// Stdlib methods whose arguments take &T.
 const STDLIB_REF_METHODS: &[&str] = &[
@@ -508,9 +511,25 @@ impl Emitter {
         };
         let close_ch = if raw.chars().nth(open_idx) == Some('(') { ')' } else { ']' };
         let inner = raw[open_idx + 1..raw.len() - 1].trim_start();
+        let macro_name = &raw[..=open_idx]; // includes the '('
+        let name_only = raw[..open_idx].trim();
+
         if !inner.starts_with('"') {
-            let macro_name = &raw[..=open_idx]; // includes the '('
-            let name_only = raw[..open_idx].trim();
+            // Writer macros: write!(writer, "fmt {x}") — skip first arg, process rest
+            if FORMAT_MACROS_WRITER.contains(&name_only) {
+                if let Some(comma_pos) = first_top_level_comma(inner) {
+                    let writer_arg = inner[..comma_pos].trim();
+                    let rest = inner[comma_pos + 1..].trim();
+                    // Delegate by re-processing as if a normal format macro on `rest`
+                    let fake_raw = format!("println!({rest})");
+                    let processed = self.process_macro_str(&fake_raw);
+                    // Extract the inner part from "println!(...)" and rebuild write!(...)
+                    if let Some(inner_start) = processed.find('(') {
+                        let processed_inner = &processed[inner_start + 1..processed.len() - 1];
+                        return format!("{macro_name}{writer_arg}, {processed_inner}{close_ch}");
+                    }
+                }
+            }
             if FORMAT_MACROS.contains(&name_only) && is_single_arg(inner) {
                 let emitted = if let Some(expr) = parser::parse_expr_str(inner) {
                     self.emit_expr(&expr)
@@ -520,6 +539,12 @@ impl Emitter {
                 return format!("{macro_name}\"{{}}\", {emitted}{close_ch}");
             }
             return raw.to_string();
+        }
+
+        // Writer macros with string as first visible arg after writer: write!(f, "fmt {x}")
+        // would have been caught above; but if inner starts with '"', it's a normal format macro.
+        if FORMAT_MACROS_WRITER.contains(&name_only) {
+            // inner starts with '"' means write!("fmt") — unusual but handle gracefully
         }
 
         let chars: Vec<char> = inner.chars().collect();
@@ -733,6 +758,26 @@ fn strip_outer_parens(s: String) -> String {
         if matched && !top_level_comma { return s[1..s.len()-1].to_string(); }
     }
     s
+}
+
+fn first_top_level_comma(s: &str) -> Option<usize> {
+    let mut depth = 0i32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            '"' => {
+                // skip string literal
+                let rest = &s[i + 1..];
+                let end = rest.find('"').unwrap_or(rest.len());
+                return first_top_level_comma(&s[i + 1 + end + 1..])
+                    .map(|p| i + 1 + end + 1 + p);
+            }
+            ',' if depth == 0 => return Some(i),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn is_single_arg(s: &str) -> bool {

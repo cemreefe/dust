@@ -101,7 +101,7 @@ impl Lexer {
         let mut s = String::new();
         loop {
             match self.advance() {
-                None | Some('\n') => return Err(DustError::new("unterminated string (use ` for multiline)", line, col)),
+                None | Some('\n') => return Err(DustError::new("unterminated string (use \"\"\" for multiline)", line, col)),
                 Some('"') => break,
                 Some('\\') => match self.advance() {
                     Some('n')  => s.push('\n'),
@@ -123,12 +123,13 @@ impl Lexer {
         Ok(Token::Str(s))
     }
 
-    /// `` `...` `` — multiline string with `{interpolation}` and indent stripping.
-    /// Called after the opening `` ` `` has been consumed.
-    fn lex_backtick_string(&mut self, line: usize, col: usize) -> Result<Token> {
+    /// `"""..."""` or `'''...'''` — multiline string with indent stripping.
+    /// `quote` is the delimiter character (`"` or `'`).
+    /// Called after all three opening quotes have been consumed.
+    fn lex_triple_string(&mut self, quote: char, line: usize, col: usize) -> Result<Token> {
         let mut s = String::new();
-        let base_indent = col.saturating_sub(1); // spaces to strip from each continuation line
-        // Strip leading newline + first-line indentation if backtick is immediately followed by newline
+        let base_indent = col.saturating_sub(1);
+        // Strip optional leading newline + first-line indent
         if self.peek() == Some('\n') {
             self.advance();
             let mut stripped = 0;
@@ -139,32 +140,28 @@ impl Lexer {
         }
         loop {
             match self.advance() {
-                None => return Err(DustError::new("unterminated backtick string", line, col)),
-                Some('`') => break,
+                None => return Err(DustError::new("unterminated triple-quoted string", line, col)),
+                Some(c) if c == quote => {
+                    // Check for closing triple quote
+                    if self.peek() == Some(quote) && self.chars.get(self.pos + 1).copied() == Some(quote) {
+                        self.advance(); self.advance();
+                        break;
+                    }
+                    s.push(c);
+                }
                 Some('\n') => {
                     s.push('\n');
-                    // strip leading spaces up to base_indent
                     let mut stripped = 0;
                     while stripped < base_indent && self.peek() == Some(' ') {
                         self.advance();
                         stripped += 1;
                     }
                 }
-                Some('\\') => match self.advance() {
-                    Some('n')  => s.push('\n'),
-                    Some('r')  => s.push('\r'),
-                    Some('t')  => s.push('\t'),
-                    Some('`')  => s.push('`'),
-                    Some('\\') => s.push('\\'),
-                    _ => return Err(DustError::new("invalid escape sequence", self.line, self.col)),
-                },
                 Some(c) => s.push(c),
             }
         }
-        // Strip trailing newline before closing backtick
-        if s.ends_with('\n') {
-            s.pop();
-        }
+        // Strip trailing newline before closing quotes
+        if s.ends_with('\n') { s.pop(); }
         Ok(Token::Str(s))
     }
 
@@ -240,14 +237,22 @@ impl Lexer {
                 Some('\n') => { self.advance(); tokens.push(Spanned::new(Token::Newline, line, col)); }
                 Some('"') => {
                     self.advance();
-                    tokens.push(Spanned::new(self.lex_string(line, col)?, line, col));
-                }
-                Some('`') => {
-                    self.advance();
-                    tokens.push(Spanned::new(self.lex_backtick_string(line, col)?, line, col));
+                    // """ multiline or " single-line
+                    if self.peek() == Some('"') && self.peek2() == Some('"') {
+                        self.advance(); self.advance();
+                        tokens.push(Spanned::new(self.lex_triple_string('"', line, col)?, line, col));
+                    } else {
+                        tokens.push(Spanned::new(self.lex_string(line, col)?, line, col));
+                    }
                 }
                 Some('\'') => {
                     self.advance(); // consume opening '
+                    // ''' multiline raw string
+                    if self.peek() == Some('\'') && self.peek2() == Some('\'') {
+                        self.advance(); self.advance();
+                        tokens.push(Spanned::new(self.lex_triple_string('\'', line, col)?, line, col));
+                        continue;
+                    }
                     // Disambiguate: lifetime vs single-quoted string
                     // Rule: if alphanumeric run is NOT followed by closing ' on same line → lifetime
                     if matches!(self.peek(), Some(c) if c.is_alphanumeric() || c == '_') {
@@ -455,16 +460,22 @@ mod tests {
     }
 
     #[test]
-    fn lex_backtick_multiline() {
-        let src = "`line one\nline two`";
+    fn lex_triple_double_multiline() {
+        let src = "\"\"\"line one\nline two\"\"\"";
         assert_eq!(tokens(src), vec![Token::Str("line one\nline two".into()), Token::Eof]);
     }
 
     #[test]
-    fn lex_backtick_strips_indent() {
-        let src = "let s = `\n  hello\n  world\n`";
+    fn lex_triple_double_strips_indent() {
+        let src = "let s = \"\"\"\n  hello\n  world\n\"\"\"";
         let toks = tokens(src);
         assert!(toks.contains(&Token::Str("hello\nworld".into())), "got: {:?}", toks);
+    }
+
+    #[test]
+    fn lex_triple_single_multiline() {
+        let src = "'''line one\nline two'''";
+        assert_eq!(tokens(src), vec![Token::Str("line one\nline two".into()), Token::Eof]);
     }
 
     #[test]

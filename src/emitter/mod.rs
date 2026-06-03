@@ -175,7 +175,7 @@ impl Emitter {
         let gp = if generics.is_empty() { String::new() } else { format!("<{generics}>") };
         let params_str = params.iter().map(emit_param).collect::<Vec<_>>().join(", ");
         let ret = ret_ty.map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
-        let body_str = self.emit_block(body, ret_ty);
+        let body_str = if ret_ty.is_some() { self.emit_block(body, ret_ty) } else { self.emit_block_no_tail(body) };
         format!("{async_kw}fn {name}{gp}({params_str}){ret} {{\n{body_str}}}\n")
     }
 
@@ -220,10 +220,14 @@ impl Emitter {
             let params = fields.iter()
                 .map(|f| format!("{}: {}", f.name, emit_ty_owned(&f.ty)))
                 .collect::<Vec<_>>().join(", ");
-            let field_inits = fields.iter()
-                .map(|f| format!("        {},\n", f.name))
-                .collect::<String>();
-            Some(format!("fn new({params}) -> {name} {{\n    {name} {{\n{field_inits}    }}\n}}\n"))
+            let field_names = fields.iter().map(|f| f.name.as_str()).collect::<Vec<_>>();
+            let body = if fields.len() <= 4 {
+                format!("{name} {{ {} }}", field_names.join(", "))
+            } else {
+                let inits = field_names.iter().map(|n| format!("        {n},\n")).collect::<String>();
+                format!("{name} {{\n{inits}    }}")
+            };
+            Some(format!("fn new({params}) -> {name} {{\n    {body}\n}}\n"))
         } else {
             None
         };
@@ -280,7 +284,7 @@ impl Emitter {
         let ret = m.ret_ty.as_ref().map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
         match &m.body {
             Some(body) => {
-                let body_str = self.emit_block(body, m.ret_ty.as_ref());
+                let body_str = if m.ret_ty.is_some() { self.emit_block(body, m.ret_ty.as_ref()) } else { self.emit_block_no_tail(body) };
                 format!("{async_kw}fn {}{gp}({params_str}){ret} {{\n{body_str}}}\n", m.name)
             }
             None => format!("{async_kw}fn {}{gp}({params_str}){ret};\n", m.name),
@@ -300,10 +304,18 @@ impl Emitter {
     // ── Blocks & Statements ────────────────────────────────────────────────────
 
     fn emit_block(&self, stmts: &[Stmt], ret_ty: Option<&Ty>) -> String {
+        self.emit_block_tail(stmts, ret_ty, true)
+    }
+
+    fn emit_block_no_tail(&self, stmts: &[Stmt]) -> String {
+        self.emit_block_tail(stmts, None, false)
+    }
+
+    fn emit_block_tail(&self, stmts: &[Stmt], ret_ty: Option<&Ty>, tail: bool) -> String {
         let mut out = String::new();
         let last = stmts.len().saturating_sub(1);
         for (i, stmt) in stmts.iter().enumerate() {
-            let line = self.emit_stmt(stmt, i == last, ret_ty);
+            let line = self.emit_stmt(stmt, tail && i == last, ret_ty);
             for l in line.lines() {
                 out.push_str("    ");
                 out.push_str(l);

@@ -38,11 +38,11 @@ struct Store
     for todo in self.todos.iter()
       if !first then out.push_str(",")
       first = false
-      out.push_str("{\"id\":")
+      out.push_str('{"id":')
       out.push_str(&todo.id.to_string())
-      out.push_str(",\"title\":\"")
+      out.push_str(',"title":"')
       out.push_str(todo.title)
-      out.push_str("\",\"done\":")
+      out.push_str('","done":')
       out.push_str(&todo.done.to_string())
       out.push_str("}")
     out.push_str("]")
@@ -124,18 +124,18 @@ fn handle(keep stream: TcpStream, keep store: Arc<Mutex<Store>>)
     let title = extract_title(body)
     mut s = store.lock().unwrap!
     let id = s.add(title)
-    respond_json(stream, "201 Created", "{\"id\":{id}}")
+    respond_json(stream, "201 Created", '{"id":{id}}')
   elif method == "DELETE"
     match parse_id(path)
       Some(id) ->
         mut s = store.lock().unwrap!
         if s.remove(id)
-          then respond_json(stream, "200 OK", "{\"deleted\":{id}}")
-          else respond_json(stream, "404 Not Found", "{\"error\":\"not found\"}")
+          then respond_json(stream, "200 OK", '{"deleted":{id}}')
+          else respond_json(stream, "404 Not Found", '{"error":"not found"}')
       None ->
-        respond_json(stream, "400 Bad Request", "{\"error\":\"bad id\"}")
+        respond_json(stream, "400 Bad Request", '{"error":"bad id"}')
   else
-    respond_json(stream, "404 Not Found", "{\"error\":\"not found\"}")
+    respond_json(stream, "404 Not Found", '{"error":"not found"}')
 
 fn main()
   let store = Arc::new(Mutex::new(Store()))

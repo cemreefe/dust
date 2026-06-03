@@ -1,1 +1,1 @@
-*.dust linguist-language=Python linguist-vendored
+*.dust linguist-language=Rust linguist-vendored

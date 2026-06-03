@@ -451,6 +451,26 @@ impl Emitter {
             Expr::Cast { expr, ty, .. } => {
                 format!("{} as {}", self.emit_expr(expr), emit_ty_owned(ty))
             }
+            Expr::NamespacedVec { ns, items } => {
+                let inner = items.iter()
+                    .map(|item| {
+                        // Emit variant name + args without the auto-prefix from emit_call
+                        match item {
+                            Expr::Call { func, args, .. } => {
+                                if let Expr::Ident { name, .. } = func.as_ref() {
+                                    let a = args.iter().map(|a| self.emit_expr(a)).collect::<Vec<_>>().join(", ");
+                                    return format!("{ns}::{name}({a})");
+                                }
+                                format!("{ns}::{}", self.emit_expr(item))
+                            }
+                            Expr::Ident { name, .. } => format!("{ns}::{name}"),
+                            _ => format!("{ns}::{}", self.emit_expr(item)),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("vec![{inner}]")
+            }
         }
     }
 

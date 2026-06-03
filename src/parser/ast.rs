@@ -130,6 +130,9 @@ pub enum Expr {
 
     // expr as Type
     Cast { expr: Box<Expr>, ty: Ty, line: usize, col: usize },
+
+    // vec! Namespace[Circle(3.0), Rect(4.0, 5.0)] — namespaced vec literal
+    NamespacedVec { ns: String, items: Vec<Expr> },
 }
 
 #[derive(Debug, Clone, PartialEq)]

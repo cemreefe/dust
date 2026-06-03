@@ -701,6 +701,41 @@ impl<'a> Parser<'a> {
 
             // Macro passthrough: stored as Ident("name!(...)")
             Token::Ident(s) if s.contains('!') => {
+                // vec! ns[item1, item2, ...] or vec! a::b::c[item1, ...] — namespaced vec literal
+                if s == "vec!" {
+                    // Lookahead: check for Ident (:: Ident)* [
+                    let is_namespaced = {
+                        let mut off = 1usize;
+                        let mut ok = false;
+                        if let Token::Ident(n) = self.peek_at(off) {
+                            if !n.contains('!') {
+                                off += 1;
+                                while self.peek_at(off) == &Token::ColonColon {
+                                    off += 1;
+                                    if let Token::Ident(_) = self.peek_at(off) { off += 1; } else { break; }
+                                }
+                                ok = self.peek_at(off) == &Token::LBracket;
+                            }
+                        }
+                        ok
+                    };
+                    if is_namespaced {
+                        self.advance(); // consume "vec!"
+                        let mut ns = self.expect_ident()?;
+                        while self.eat(&Token::ColonColon) {
+                            ns.push_str("::");
+                            ns.push_str(&self.expect_ident()?);
+                        }
+                        self.expect(&Token::LBracket)?;
+                        let mut items: Vec<Expr> = Vec::new();
+                        while !matches!(self.peek(), Token::RBracket | Token::Eof) {
+                            items.push(self.parse_expr()?);
+                            if !self.eat(&Token::Comma) { break; }
+                        }
+                        self.expect(&Token::RBracket)?;
+                        return Ok(Expr::NamespacedVec { ns, items });
+                    }
+                }
                 self.advance();
                 Ok(Expr::Macro { raw: s, line, col })
             }

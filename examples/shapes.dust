@@ -18,7 +18,7 @@ fn describe(shape: Shape) -> str
     Triangle(base, height) -> "triangle base={base} height={height}"
 
 fn main()
-  let shapes = vec![Shape::Circle(3.0), Shape::Rect(4.0, 5.0), Shape::Triangle(6.0, 8.0)]
+  let shapes = vec! Shape[Circle(3.0), Rect(4.0, 5.0), Triangle(6.0, 8.0)]
   for shape in shapes
     let area = area(shape)
     println!("{describe(shape)}: area = {area:.2}")

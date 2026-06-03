@@ -78,21 +78,36 @@ impl<'a> Parser<'a> {
         Ok(items)
     }
 
+    fn collect_attrs(&mut self) -> Vec<String> {
+        let mut attrs = Vec::new();
+        loop {
+            self.skip_newlines();
+            if let Token::Attr(a) = self.peek().clone() {
+                attrs.push(a);
+                self.advance();
+            } else {
+                break;
+            }
+        }
+        attrs
+    }
+
     // ── Items ─────────────────────────────────────────────────────────────────
 
     fn parse_item(&mut self) -> Result<Item> {
+        let attrs = self.collect_attrs();
         let line = self.line();
         let col  = self.col();
         match self.peek().clone() {
             Token::KwAsync => {
                 self.advance();
                 self.expect(&Token::KwFn)?;
-                self.parse_fn(true, line, col)
+                self.parse_fn(true, attrs, line, col)
             }
-            Token::KwFn     => { self.advance(); self.parse_fn(false, line, col) }
-            Token::KwStruct => { self.advance(); self.parse_struct(line, col) }
+            Token::KwFn     => { self.advance(); self.parse_fn(false, attrs, line, col) }
+            Token::KwStruct => { self.advance(); self.parse_struct(attrs, line, col) }
             Token::KwTrait  => { self.advance(); self.parse_trait(line, col) }
-            Token::KwEnum   => { self.advance(); self.parse_enum(line, col) }
+            Token::KwEnum   => { self.advance(); self.parse_enum(attrs, line, col) }
             Token::KwUse    => { self.advance(); self.parse_use(line, col) }
             Token::KwConst  => { self.advance(); self.parse_const(line, col) }
             tok => Err(DustError::new(
@@ -102,27 +117,28 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_fn(&mut self, is_async: bool, line: usize, col: usize) -> Result<Item> {
+    fn parse_fn(&mut self, is_async: bool, attrs: Vec<String>, line: usize, col: usize) -> Result<Item> {
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params();
         let params = self.parse_param_list()?;
         let ret_ty = if self.eat(&Token::Arrow) { Some(self.parse_ty()?) } else { None };
         let body = self.parse_block()?;
-        Ok(Item::Fn { name, generics, is_async, params, ret_ty, body, line, col })
+        Ok(Item::Fn { name, generics, is_async, params, ret_ty, body, attrs, line, col })
     }
 
-    fn parse_struct(&mut self, line: usize, col: usize) -> Result<Item> {
+    fn parse_struct(&mut self, attrs: Vec<String>, line: usize, col: usize) -> Result<Item> {
         let name = self.expect_ident()?;
         let generics = self.parse_generic_params();
-        let traits = if self.eat(&Token::KwIs) {
+        let mut traits = if self.eat(&Token::KwIs) {
             self.parse_trait_list()?
         } else { vec![] };
         self.skip_newlines();
         self.expect(&Token::Indent)?;
         self.skip_newlines();
 
-        let mut fields  = Vec::new();
-        let mut methods = Vec::new();
+        let mut fields      = Vec::new();
+        let mut methods     = Vec::new();
+        let mut assoc_types = Vec::new();
 
         while !matches!(self.peek(), Token::Dedent | Token::Eof) {
             self.skip_newlines();
@@ -133,19 +149,49 @@ impl<'a> Parser<'a> {
                     let is_async = if self.eat(&Token::KwAsync) { self.expect(&Token::KwFn)?; true } else { self.advance(); false };
                     methods.push(self.parse_method(is_async, fl, fc)?);
                 }
+                // is Trait — additional trait inside body
+                Token::KwIs => {
+                    self.advance();
+                    for t in self.parse_trait_list()? { traits.push(t); }
+                    self.skip_newlines();
+                }
+                // type Name = Ty  — associated type in trait impl
+                Token::Ident(ref s) if s == "type" => {
+                    self.advance();
+                    let aname = self.expect_ident()?;
+                    self.expect(&Token::Eq)?;
+                    let aty = self.parse_ty()?;
+                    assoc_types.push((aname, aty));
+                    self.skip_newlines();
+                }
+                Token::Attr(a) => {
+                    // field-level @attr — collect and attach to next parsed field
+                    let a = a.clone();
+                    self.advance();
+                    self.skip_newlines();
+                    // Parse the field immediately after
+                    if let Token::Ident(_) = self.peek().clone() {
+                        let fl2 = self.line(); let fc2 = self.col();
+                        let fname = self.expect_ident()?;
+                        self.expect(&Token::Colon)?;
+                        let fty = self.parse_ty()?;
+                        fields.push(Field { name: fname, ty: fty, attrs: vec![a], line: fl2, col: fc2 });
+                        self.skip_newlines();
+                    }
+                }
                 Token::Ident(_) => {
                     // field: name: Type
                     let fname = self.expect_ident()?;
                     self.expect(&Token::Colon)?;
                     let fty = self.parse_ty()?;
-                    fields.push(Field { name: fname, ty: fty, line: fl, col: fc });
+                    fields.push(Field { name: fname, ty: fty, attrs: vec![], line: fl, col: fc });
                     self.skip_newlines();
                 }
                 _ => { self.advance(); }
             }
         }
         self.expect(&Token::Dedent)?;
-        Ok(Item::Struct { name, generics, traits, fields, methods, line, col })
+        Ok(Item::Struct { name, generics, traits, fields, methods, assoc_types, attrs, line, col })
     }
 
     fn parse_method(&mut self, is_async: bool, line: usize, col: usize) -> Result<Method> {
@@ -158,10 +204,11 @@ impl<'a> Parser<'a> {
             (None, first)
         };
 
+        let generics = self.parse_generic_params();
         let params = self.parse_param_list()?;
         let ret_ty = if self.eat(&Token::Arrow) { Some(self.parse_ty()?) } else { None };
         let body = Some(self.parse_block()?);
-        Ok(Method { trait_qualifier, name, is_async, params, ret_ty, body, line, col })
+        Ok(Method { trait_qualifier, name, generics, is_async, params, ret_ty, body, line, col })
     }
 
     fn parse_trait(&mut self, line: usize, col: usize) -> Result<Item> {
@@ -178,12 +225,14 @@ impl<'a> Parser<'a> {
             let ml = self.line(); let mc = self.col();
             let is_async = if self.eat(&Token::KwAsync) { self.expect(&Token::KwFn)?; true } else { self.expect(&Token::KwFn)?; false };
             let mname = self.expect_ident()?;
+            let generics = self.parse_generic_params();
             let params = self.parse_param_list()?;
             let ret_ty = if self.eat(&Token::Arrow) { Some(self.parse_ty()?) } else { None };
             self.skip_newlines();
             methods.push(Method {
                 trait_qualifier: None,
                 name: mname,
+                generics,
                 is_async,
                 params,
                 ret_ty,
@@ -196,8 +245,11 @@ impl<'a> Parser<'a> {
         Ok(Item::Trait { name, generics, methods, line, col })
     }
 
-    fn parse_enum(&mut self, line: usize, col: usize) -> Result<Item> {
+    fn parse_enum(&mut self, attrs: Vec<String>, line: usize, col: usize) -> Result<Item> {
         let name = self.expect_ident()?;
+        let traits = if self.eat(&Token::KwIs) {
+            self.parse_trait_list()?
+        } else { vec![] };
         self.skip_newlines();
         self.expect(&Token::Indent)?;
         self.skip_newlines();
@@ -206,6 +258,8 @@ impl<'a> Parser<'a> {
         while !matches!(self.peek(), Token::Dedent | Token::Eof) {
             self.skip_newlines();
             if matches!(self.peek(), Token::Dedent | Token::Eof) { break; }
+            // Skip inline attrs inside enum body
+            if matches!(self.peek(), Token::Attr(_)) { self.advance(); self.skip_newlines(); continue; }
             let vl = self.line(); let vc = self.col();
             let vname = self.expect_ident()?;
             let mut fields = Vec::new();
@@ -220,7 +274,7 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
         self.expect(&Token::Dedent)?;
-        Ok(Item::Enum { name, variants, line, col })
+        Ok(Item::Enum { name, traits, variants, attrs, line, col })
     }
 
     fn parse_const(&mut self, line: usize, col: usize) -> Result<Item> {
@@ -260,8 +314,12 @@ impl<'a> Parser<'a> {
 
     fn parse_param(&mut self) -> Result<Param> {
         let line = self.line(); let col = self.col();
-        let keep = self.eat(&Token::KwKeep);
-        let mutable = self.eat(&Token::KwMut);
+        // & self → immutable self reference (store as keep=false, mutable=false with special marker)
+        // We encode &self as keep=false, mutable=false (no keep, no mut).
+        // keep self → owned self; mut self → &mut self; self → &mut self; & self → &self
+        let ref_self = self.eat(&Token::Ampersand);
+        let keep = !ref_self && self.eat(&Token::KwKeep);
+        let mutable = !ref_self && self.eat(&Token::KwMut);
         let name = if matches!(self.peek(), Token::KwSelf) {
             self.advance(); "self".to_string()
         } else {
@@ -270,7 +328,8 @@ impl<'a> Parser<'a> {
         let ty = if self.eat(&Token::Colon) {
             self.parse_ty()?
         } else if name == "self" {
-            Ty::SelfTy
+            // Encode ref_self state: ref_self means immutable borrow
+            if ref_self { Ty::Ref(Box::new(Ty::SelfTy)) } else { Ty::SelfTy }
         } else {
             return Err(DustError::new(format!("expected ':' after param '{name}'"), line, col));
         };
@@ -296,6 +355,14 @@ impl<'a> Parser<'a> {
             }
             Token::Ident(name) => {
                 self.advance();
+                // Build qualified path: S::Error, std::io::Error, de::Error, etc.
+                let mut full_name = name;
+                while self.peek() == &Token::ColonColon {
+                    self.advance();
+                    let seg = self.expect_ident()?;
+                    full_name.push_str("::");
+                    full_name.push_str(&seg);
+                }
                 if self.eat(&Token::Lt) {
                     let mut args = Vec::new();
                     loop {
@@ -304,9 +371,9 @@ impl<'a> Parser<'a> {
                         if !self.eat(&Token::Comma) { break; }
                     }
                     self.expect(&Token::Gt)?;
-                    Ty::Generic(name, args)
+                    Ty::Generic(full_name, args)
                 } else {
-                    Ty::Simple(name)
+                    Ty::Simple(full_name)
                 }
             }
             tok => return Err(DustError::new(format!("expected type, found {:?}", tok), self.line(), self.col())),
@@ -370,6 +437,20 @@ impl<'a> Parser<'a> {
                 let iter = self.parse_expr()?;
                 let body = self.parse_block()?;
                 Ok(Stmt::For { vars, iter, body, line, col })
+            }
+            Token::KwWhile => {
+                self.advance();
+                if self.eat(&Token::KwLet) {
+                    let pattern = self.parse_pattern()?;
+                    self.expect(&Token::Eq)?;
+                    let value = self.parse_expr()?;
+                    let body = self.parse_block()?;
+                    Ok(Stmt::WhileLet { pattern, value, body, line, col })
+                } else {
+                    let cond = self.parse_expr()?;
+                    let body = self.parse_block()?;
+                    Ok(Stmt::While { cond, body, line, col })
+                }
             }
             Token::KwTry => {
                 self.advance();
@@ -699,6 +780,13 @@ impl<'a> Parser<'a> {
             Token::Char(c) => { self.advance(); Ok(Expr::Char(c)) }
             Token::Bool(b) => { self.advance(); Ok(Expr::Bool(b)) }
 
+            // Zero-argument closure: || expr
+            Token::PipePipe => {
+                self.advance();
+                let body = Box::new(self.parse_expr()?);
+                Ok(Expr::Closure { params: vec![], body, line, col })
+            }
+
             // Macro passthrough: stored as Ident("name!(...)")
             Token::Ident(s) if s.contains('!') => {
                 // vec! ns[item1, item2, ...] or vec! a::b::c[item1, ...] — namespaced vec literal
@@ -936,9 +1024,19 @@ impl<'a> Parser<'a> {
                     tok => Err(DustError::new(format!("expected number after '-' in pattern, found {:?}", tok), line, col)),
                 }
             }
-            // Ident, enum variant, wildcard
+            // Ident, qualified path (Ns::Variant), enum variant, wildcard
             _ => {
-                let name = self.expect_ident()?;
+                let first = self.expect_ident()?;
+                // Build a possibly-qualified path: Ns::Variant or Ns::Sub::Variant
+                let func_expr = if self.peek() == &Token::ColonColon {
+                    let mut segments = vec![first];
+                    while self.eat(&Token::ColonColon) {
+                        segments.push(self.expect_ident()?);
+                    }
+                    Expr::Path { segments, line, col }
+                } else {
+                    Expr::Ident { name: first, line, col }
+                };
                 if self.eat(&Token::LParen) {
                     let mut args = Vec::new();
                     while !matches!(self.peek(), Token::RParen | Token::Eof) {
@@ -946,9 +1044,9 @@ impl<'a> Parser<'a> {
                         if !self.eat(&Token::Comma) { break; }
                     }
                     self.expect(&Token::RParen)?;
-                    Ok(Expr::Call { func: Box::new(Expr::Ident { name, line, col }), args, line, col })
+                    Ok(Expr::Call { func: Box::new(func_expr), args, line, col })
                 } else {
-                    Ok(Expr::Ident { name, line, col })
+                    Ok(func_expr)
                 }
             }
         }
@@ -988,23 +1086,32 @@ impl<'a> Parser<'a> {
                     out.push('>'); self.advance();
                 }
                 Token::Eof => break,
-                Token::Ident(s)  => { out.push_str(&s); self.advance(); }
-                Token::Comma     => { out.push_str(", "); self.advance(); }
-                Token::Colon     => { out.push_str(": "); self.advance(); }
-                Token::Plus      => { out.push_str(" + "); self.advance(); }
-                Token::Ampersand => { out.push('&'); self.advance(); }
-                Token::KwMut     => { out.push_str("mut "); self.advance(); }
-                _                => { self.advance(); }
+                Token::Ident(s)      => { out.push_str(&s); self.advance(); }
+                Token::Lifetime(s)   => { out.push('\''); out.push_str(&s); self.advance(); }
+                Token::Comma         => { out.push_str(", "); self.advance(); }
+                Token::Colon         => { out.push_str(": "); self.advance(); }
+                Token::ColonColon    => { out.push_str("::"); self.advance(); }
+                Token::Plus          => { out.push_str(" + "); self.advance(); }
+                Token::Ampersand     => { out.push('&'); self.advance(); }
+                Token::KwMut         => { out.push_str("mut "); self.advance(); }
+                Token::KwSelf        => { out.push_str("Self"); self.advance(); }
+                _                    => { self.advance(); }
             }
         }
         out.trim().to_string()
     }
 
-    /// Parse a trait list for `is Trait1, Trait2<T>` — handles generic trait names.
+    /// Parse a trait list for `is Trait1, de::Trait2<'de>` — handles qualified + generic trait names.
     fn parse_trait_list(&mut self) -> Result<Vec<String>> {
         let mut traits = Vec::new();
         loop {
-            let name = self.expect_ident()?;
+            let mut name = self.expect_ident()?;
+            // Handle qualified names: de::Visitor, std::fmt::Display, etc.
+            while self.eat(&Token::ColonColon) {
+                let seg = self.expect_ident()?;
+                name.push_str("::");
+                name.push_str(&seg);
+            }
             let generics = self.parse_generic_params();
             if generics.is_empty() {
                 traits.push(name);

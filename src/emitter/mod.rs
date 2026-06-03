@@ -45,7 +45,7 @@ fn build_sig_table(items: &[Item]) -> SigTable {
                     }
                 }
             }
-            Item::Enum { name, variants, .. } => {
+            Item::Enum { name, variants, traits: _, .. } => {
                 for v in variants {
                     enum_variants.insert(v.name.clone(), name.clone());
                 }
@@ -133,12 +133,17 @@ impl Emitter {
 
     fn emit_item(&self, item: &Item) -> String {
         match item {
-            Item::Fn { name, generics, is_async, params, ret_ty, body, .. } =>
-                self.emit_fn(name, generics, *is_async, params, ret_ty.as_ref(), body),
-            Item::Struct { name, generics, traits, fields, methods, .. } =>
-                self.emit_struct(name, generics, traits, fields, methods),
+            Item::Fn { name, generics, is_async, params, ret_ty, body, attrs, .. } => {
+                let attr_lines = attrs.iter().map(|a| format!("#[{a}]\n")).collect::<String>();
+                format!("{}{}", attr_lines, self.emit_fn(name, generics, *is_async, params, ret_ty.as_ref(), body))
+            }
+            Item::Struct { name, generics, traits, fields, methods, assoc_types, attrs, .. } => {
+                self.emit_struct(name, generics, traits, fields, methods, assoc_types, attrs)
+            }
             Item::Trait { name, generics, methods, .. } => self.emit_trait(name, generics, methods),
-            Item::Enum { name, variants, .. } => emit_enum(name, variants),
+            Item::Enum { name, traits, variants, attrs, .. } => {
+                emit_enum(name, traits, variants, attrs)
+            }
             Item::Use { path, .. } => format!("use {};", path),
             Item::Const { name, value, .. } => {
                 let (ty, val) = match value {
@@ -166,6 +171,7 @@ impl Emitter {
 
     fn emit_fn(&self, name: &str, generics: &str, is_async: bool, params: &[Param], ret_ty: Option<&Ty>, body: &[Stmt]) -> String {
         let async_kw = if is_async { "async " } else { "" };
+        let generics = &ensure_lifetimes_declared(generics);
         let gp = if generics.is_empty() { String::new() } else { format!("<{generics}>") };
         let params_str = params.iter().map(emit_param).collect::<Vec<_>>().join(", ");
         let ret = ret_ty.map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
@@ -173,21 +179,39 @@ impl Emitter {
         format!("{async_kw}fn {name}{gp}({params_str}){ret} {{\n{body_str}}}\n")
     }
 
-    fn emit_struct(&self, name: &str, generics: &str, traits: &[String], fields: &[Field], methods: &[Method]) -> String {
+    fn emit_struct(&self, name: &str, generics: &str, traits: &[String], fields: &[Field], methods: &[Method], assoc_types: &[(String, Ty)], attrs: &[String]) -> String {
+        const DERIVE_TRAITS: &[&str] = &[
+            "Deserialize", "Serialize", "Clone", "Copy", "Hash",
+            "PartialEq", "Eq", "PartialOrd", "Ord",
+        ];
+        let (derive_traits, impl_traits): (Vec<&String>, Vec<&String>) =
+            traits.iter().partition(|t| DERIVE_TRAITS.contains(&t.as_str()));
+
         let mut out = String::new();
         let own_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_none()).collect();
         let trait_methods: Vec<&Method> = methods.iter().filter(|m| m.trait_qualifier.is_some()).collect();
         let has_no_arg_new = own_methods.iter().any(|m| m.name == "new" && m.params.is_empty());
         let has_any_new   = own_methods.iter().any(|m| m.name == "new");
 
-        // Generic structs can't always derive Default without bounds — skip for now
+        // derive comes first, then custom attrs, so serde helper attrs work
+        let mut derives = vec![];
         if !has_no_arg_new && !fields.is_empty() && generics.is_empty() {
-            out.push_str("#[derive(Default)]\n");
+            derives.push("Default".to_string());
+        }
+        for t in &derive_traits { derives.push(t.to_string()); }
+        if !derives.is_empty() {
+            out.push_str(&format!("#[derive({})]\n", derives.join(", ")));
+        }
+        for a in attrs {
+            out.push_str(&format!("#[{a}]\n"));
         }
         let gp     = if generics.is_empty() { String::new() } else { format!("<{generics}> ") };
         let gp_use = if generics.is_empty() { String::new() } else { format!("<{}>", strip_bounds(generics)) };
         out.push_str(&format!("struct {name}{gp} {{\n"));
         for f in fields {
+            for a in &f.attrs {
+                out.push_str(&format!("    #[{a}]\n"));
+            }
             out.push_str(&format!("    {}: {},\n", f.name, emit_ty_owned(&f.ty)));
         }
         out.push_str("}\n");
@@ -215,11 +239,31 @@ impl Emitter {
             out.push_str("}\n");
         }
 
-        for trait_name in traits {
+        for trait_name in &impl_traits {
+            let base = trait_name.split('<').next().unwrap_or(trait_name);
+            // Extract base for matching (strip module path)
+            let base_short = base.rsplit("::").next().unwrap_or(base);
             let tmethods: Vec<&Method> = trait_methods.iter()
-                .filter(|m| m.trait_qualifier.as_deref() == Some(trait_name.split('<').next().unwrap_or(trait_name)))
+                .filter(|m| {
+                    let tq = m.trait_qualifier.as_deref().unwrap_or("");
+                    tq == base || tq == base_short
+                })
                 .copied().collect();
-            out.push_str(&format!("\nimpl{gp} {trait_name} for {name}{gp_use} {{\n"));
+            // Collect lifetimes from trait generic args: 'de, 'a, etc.
+            let lifetimes = extract_lifetimes_from_str(trait_name);
+            let impl_gp = if !generics.is_empty() && !lifetimes.is_empty() {
+                format!("<{generics}, {}>", lifetimes.join(", "))
+            } else if !generics.is_empty() {
+                format!("<{generics}>")
+            } else if !lifetimes.is_empty() {
+                format!("<{}>", lifetimes.join(", "))
+            } else {
+                String::new()
+            };
+            out.push_str(&format!("\nimpl{impl_gp} {trait_name} for {name}{gp_use} {{\n"));
+            for (aname, aty) in assoc_types {
+                out.push_str(&format!("    type {aname} = {};\n", emit_ty_owned(aty)));
+            }
             for m in tmethods {
                 out.push_str(&indent_block(&self.emit_method(m)));
             }
@@ -230,14 +274,16 @@ impl Emitter {
 
     fn emit_method(&self, m: &Method) -> String {
         let async_kw = if m.is_async { "async " } else { "" };
+        // Don't auto-declare lifetimes in methods — they come from the enclosing impl<'lt> block
+        let gp = if m.generics.is_empty() { String::new() } else { format!("<{}>", m.generics) };
         let params_str = m.params.iter().map(emit_param).collect::<Vec<_>>().join(", ");
         let ret = m.ret_ty.as_ref().map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
         match &m.body {
             Some(body) => {
                 let body_str = self.emit_block(body, m.ret_ty.as_ref());
-                format!("{async_kw}fn {}({params_str}){ret} {{\n{body_str}}}\n", m.name)
+                format!("{async_kw}fn {}{gp}({params_str}){ret} {{\n{body_str}}}\n", m.name)
             }
-            None => format!("{async_kw}fn {}({params_str}){ret};\n", m.name),
+            None => format!("{async_kw}fn {}{gp}({params_str}){ret};\n", m.name),
         }
     }
 
@@ -338,6 +384,12 @@ impl Emitter {
             Stmt::For { vars, iter, body, .. } => {
                 let pat = if vars.len() == 1 { vars[0].clone() } else { format!("({})", vars.join(", ")) };
                 format!("for {pat} in {} {{\n{}}}", self.emit_expr(iter), self.emit_block(body, ret_ty))
+            }
+            Stmt::While { cond, body, .. } => {
+                format!("while {} {{\n{}}}", self.emit_expr(cond), self.emit_block(body, ret_ty))
+            }
+            Stmt::WhileLet { pattern, value, body, .. } => {
+                format!("while let {} = {} {{\n{}}}", self.emit_expr(pattern), self.emit_expr(value), self.emit_block(body, ret_ty))
             }
             Stmt::Break(..)    => "break".into(),
             Stmt::Continue(..) => "continue".into(),
@@ -693,8 +745,21 @@ impl Emitter {
 
 // ── Pure helpers (no sig needed) ──────────────────────────────────────────────
 
-fn emit_enum(name: &str, variants: &[Variant]) -> String {
-    let mut out = format!("enum {name} {{\n");
+fn emit_enum(name: &str, traits: &[String], variants: &[Variant], attrs: &[String]) -> String {
+    const DERIVE_TRAITS: &[&str] = &[
+        "Deserialize", "Serialize", "Clone", "Copy", "Hash",
+        "PartialEq", "Eq", "PartialOrd", "Ord",
+    ];
+    let derive_traits: Vec<&String> = traits.iter().filter(|t| DERIVE_TRAITS.contains(&t.as_str())).collect();
+    let mut out = String::new();
+    // derive comes first so serde helper attrs can follow it
+    if !derive_traits.is_empty() {
+        out.push_str(&format!("#[derive({})]\n", derive_traits.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")));
+    }
+    for a in attrs {
+        out.push_str(&format!("#[{a}]\n"));
+    }
+    out.push_str(&format!("enum {name} {{\n"));
     for v in variants {
         if v.fields.is_empty() {
             out.push_str(&format!("    {},\n", v.name));
@@ -709,7 +774,13 @@ fn emit_enum(name: &str, variants: &[Variant]) -> String {
 
 fn emit_param(p: &Param) -> String {
     if p.name == "self" {
-        return if p.keep { "self".into() } else { "&mut self".into() };
+        return if p.keep {
+            "self".into()
+        } else if matches!(p.ty, Ty::Ref(ref inner) if **inner == Ty::SelfTy) {
+            "&self".into()      // & self → &self
+        } else {
+            "&mut self".into()  // self / mut self → &mut self
+        };
     }
     if p.keep && p.mutable {
         return format!("mut {}: {}", p.name, emit_ty_owned(&p.ty));
@@ -823,8 +894,20 @@ fn is_single_arg(s: &str) -> bool {
 
 fn emit_str(s: &str) -> String {
     let (fmt, args) = extract_str_args(s);
-    if args.is_empty() { format!("\"{fmt}\"") }
-    else { format!("format!(\"{fmt}\", {})", args.join(", ")) }
+    if args.is_empty() {
+        // No interpolation — emit raw string without brace escaping
+        let escaped: String = s.chars().map(|c| match c {
+            '"'  => "\\\"".to_string(),
+            '\\' => "\\\\".to_string(),
+            '\n' => "\\n".to_string(),
+            '\t' => "\\t".to_string(),
+            '\r' => "\\r".to_string(),
+            c    => c.to_string(),
+        }).collect();
+        format!("\"{escaped}\"")
+    } else {
+        format!("format!(\"{fmt}\", {})", args.join(", "))
+    }
 }
 
 
@@ -902,6 +985,64 @@ fn single_to_double_quotes(expr: &str) -> String {
 
 fn indent_block(s: &str) -> String {
     s.lines().map(|l| format!("    {l}\n")).collect()
+}
+
+/// Ensure all lifetimes used in a generic params string are declared at the top level.
+/// e.g. `"D: Deserializer<'de>"` → `"'de, D: Deserializer<'de>"`
+fn ensure_lifetimes_declared(generics: &str) -> String {
+    if generics.is_empty() { return generics.to_string(); }
+    // Split top-level comma-separated params (respecting angle bracket depth)
+    let mut segments: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut depth = 0usize;
+    for c in generics.chars() {
+        match c {
+            '<' => { depth += 1; current.push(c); }
+            '>' => { depth -= 1; current.push(c); }
+            ',' if depth == 0 => { segments.push(current.trim().to_string()); current = String::new(); }
+            _ => { current.push(c); }
+        }
+    }
+    if !current.trim().is_empty() { segments.push(current.trim().to_string()); }
+    // Collect declared top-level lifetimes (segments starting with ')
+    let declared: Vec<String> = segments.iter()
+        .filter(|s| s.starts_with('\''))
+        .map(|s| s.split_whitespace().next().unwrap_or(s).to_string())
+        .collect();
+    // Collect all lifetimes used in the full string
+    let all_used = extract_lifetimes_from_str(generics);
+    // Prepend any used but not declared
+    let mut extra: Vec<String> = all_used.into_iter()
+        .filter(|lt| !declared.contains(lt))
+        .collect();
+    if extra.is_empty() { return generics.to_string(); }
+    extra.extend(segments);
+    extra.join(", ")
+}
+
+/// Extract lifetime params from a string: `"de::Visitor<'de>"` → `["'de"]`
+fn extract_lifetimes_from_str(s: &str) -> Vec<String> {
+    let mut result = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\'' {
+            let start = i;
+            i += 1;
+            while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                i += 1;
+            }
+            if i > start + 1 {
+                let lt: String = chars[start..i].iter().collect();
+                if !result.contains(&lt) {
+                    result.push(lt);
+                }
+            }
+        } else {
+            i += 1;
+        }
+    }
+    result
 }
 
 /// Strip bounds from generic params: `"A: Clone, B: Default"` → `"A, B"`

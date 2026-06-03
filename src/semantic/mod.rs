@@ -171,6 +171,16 @@ fn analyze_stmt(stmt: &mut Stmt, ctx: &mut Ctx) -> Result<()> {
             let mut child = ctx.child();
             analyze_block(body, &mut child)?;
         }
+        Stmt::While { cond, body, .. } => {
+            analyze_expr(cond, ctx)?;
+            let mut child = ctx.child();
+            analyze_block(body, &mut child)?;
+        }
+        Stmt::WhileLet { value, body, .. } => {
+            analyze_expr(value, ctx)?;
+            let mut child = ctx.child();
+            analyze_block(body, &mut child)?;
+        }
         Stmt::Break(..) | Stmt::Continue(..) => {}
         Stmt::Use { .. } => {}
     }

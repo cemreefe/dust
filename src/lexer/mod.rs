@@ -190,6 +190,14 @@ impl Lexer {
             match self.peek() {
                 None => { tokens.push(Spanned::new(Token::Eof, line, col)); break; }
                 Some('#') => { while !matches!(self.peek(), None | Some('\n')) { self.advance(); } }
+                Some('@') => {
+                    self.advance();
+                    let mut content = String::new();
+                    while !matches!(self.peek(), None | Some('\n')) {
+                        content.push(self.advance().unwrap());
+                    }
+                    tokens.push(Spanned::new(Token::Attr(content.trim().to_string()), line, col));
+                }
                 Some('\r') => { self.advance(); }
                 Some('\n') => { self.advance(); tokens.push(Spanned::new(Token::Newline, line, col)); }
                 Some('"') => {
@@ -197,8 +205,31 @@ impl Lexer {
                     tokens.push(Spanned::new(self.lex_string(line, col)?, line, col));
                 }
                 Some('\'') => {
-                    self.advance();
-                    tokens.push(Spanned::new(self.lex_single_quoted_str(line, col)?, line, col));
+                    self.advance(); // consume opening '
+                    // Disambiguate: lifetime vs char literal vs single-quoted string
+                    // 'ident  → lifetime (if not followed by closing ')
+                    // 'x'    → char literal (single alphanumeric char followed by ')
+                    // '...'  → single-quoted string (fallback)
+                    if matches!(self.peek(), Some(c) if c.is_alphanumeric() || c == '_') {
+                        let mut ident = String::new();
+                        while matches!(self.peek(), Some(c) if c.is_alphanumeric() || c == '_') {
+                            ident.push(self.advance().unwrap());
+                        }
+                        if ident.len() == 1 && self.peek() == Some('\'') {
+                            // 'a' — char literal
+                            self.advance();
+                            tokens.push(Spanned::new(Token::Char(ident.chars().next().unwrap()), line, col));
+                        } else if self.peek() == Some('\'') {
+                            // 'ab' style — treat as string
+                            self.advance();
+                            tokens.push(Spanned::new(Token::Str(ident), line, col));
+                        } else {
+                            // 'de or 'a> etc — lifetime
+                            tokens.push(Spanned::new(Token::Lifetime(ident), line, col));
+                        }
+                    } else {
+                        tokens.push(Spanned::new(self.lex_single_quoted_str(line, col)?, line, col));
+                    }
                 }
                 Some(c) if c.is_ascii_digit() => {
                     self.advance();

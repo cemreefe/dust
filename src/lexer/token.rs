@@ -89,6 +89,12 @@ pub enum Token {
     Newline,
 
     Eof,
+
+    // Rust attribute passthrough: @serde(tag = "type")  →  #[serde(tag = "type")]
+    Attr(String),
+
+    // Lifetime: 'de, 'a, '_
+    Lifetime(String),
 }
 
 impl Token {

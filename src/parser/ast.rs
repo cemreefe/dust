@@ -42,6 +42,7 @@ pub enum Expr {
     Float(f64),
     Str(String),    // raw string literal (may contain {name} interpolation)
     Char(char),
+    ByteChar(char),
     Bool(bool),
     Tuple(Vec<Expr>),
     Ident { name: String, line: usize, col: usize },
@@ -184,6 +185,9 @@ pub enum Stmt {
         col: usize,
     },
 
+    While    { cond: Expr,               body: Vec<Stmt>, line: usize, col: usize },
+    WhileLet { pattern: Expr, value: Expr, body: Vec<Stmt>, line: usize, col: usize },
+
     Break(usize, usize),
     Continue(usize, usize),
 
@@ -196,6 +200,7 @@ pub enum Stmt {
 pub struct Field {
     pub name: String,
     pub ty: Ty,
+    pub attrs: Vec<String>,
     pub line: usize,
     pub col: usize,
 }
@@ -206,6 +211,7 @@ pub struct Method {
     /// None = own method, Some("Trait") = trait impl method
     pub trait_qualifier: Option<String>,
     pub name: String,
+    pub generics: String,
     pub is_async: bool,
     pub params: Vec<Param>,
     pub ret_ty: Option<Ty>,
@@ -234,6 +240,7 @@ pub enum Item {
         params: Vec<Param>,
         ret_ty: Option<Ty>,
         body: Vec<Stmt>,
+        attrs: Vec<String>,
         line: usize,
         col: usize,
     },
@@ -243,6 +250,8 @@ pub enum Item {
         traits: Vec<String>,
         fields: Vec<Field>,
         methods: Vec<Method>,
+        assoc_types: Vec<(String, Ty)>, // type Name = Ty  inside trait impls
+        attrs: Vec<String>,
         line: usize,
         col: usize,
     },
@@ -255,7 +264,9 @@ pub enum Item {
     },
     Enum {
         name: String,
+        traits: Vec<String>,
         variants: Vec<Variant>,
+        attrs: Vec<String>,
         line: usize,
         col: usize,
     },

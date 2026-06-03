@@ -69,11 +69,13 @@ impl Lexer {
         }
     }
 
+    /// `'...'` — single-line raw string. `"` allowed freely, no interpolation.
+    /// Called after the opening `'` has been consumed.
     fn lex_single_quoted_str(&mut self, line: usize, col: usize) -> Result<Token> {
         let mut s = String::new();
         loop {
             match self.advance() {
-                None => return Err(DustError::new("unterminated string literal", line, col)),
+                None | Some('\n') => return Err(DustError::new("unterminated string literal", line, col)),
                 Some('\'') => break,
                 Some('\\') => {
                     let esc = match self.advance() {
@@ -93,23 +95,14 @@ impl Lexer {
         Ok(Token::Str(s))
     }
 
+    /// `"..."` — single-line string with `{interpolation}`. Errors on unescaped newline.
+    /// Called after the opening `"` has been consumed.
     fn lex_string(&mut self, line: usize, col: usize) -> Result<Token> {
         let mut s = String::new();
-        // col is 1-based column of the opening "; strip that many spaces from continuation lines
-        let base_indent = col;
         loop {
             match self.advance() {
-                None => return Err(DustError::new("unterminated string", line, col)),
+                None | Some('\n') => return Err(DustError::new("unterminated string (use \"\"\" for multiline)", line, col)),
                 Some('"') => break,
-                Some('\n') => {
-                    s.push('\n');
-                    // strip leading spaces up to base_indent from the continuation line
-                    let mut stripped = 0;
-                    while stripped < base_indent && self.peek() == Some(' ') {
-                        self.advance();
-                        stripped += 1;
-                    }
-                }
                 Some('\\') => match self.advance() {
                     Some('n')  => s.push('\n'),
                     Some('r')  => s.push('\r'),
@@ -127,6 +120,48 @@ impl Lexer {
                 Some(c) => s.push(c),
             }
         }
+        Ok(Token::Str(s))
+    }
+
+    /// `"""..."""` or `'''...'''` — multiline string with indent stripping.
+    /// `quote` is the delimiter character (`"` or `'`).
+    /// Called after all three opening quotes have been consumed.
+    fn lex_triple_string(&mut self, quote: char, line: usize, col: usize) -> Result<Token> {
+        let mut s = String::new();
+        let base_indent = col.saturating_sub(1);
+        // Strip optional leading newline + first-line indent
+        if self.peek() == Some('\n') {
+            self.advance();
+            let mut stripped = 0;
+            while stripped < base_indent && self.peek() == Some(' ') {
+                self.advance();
+                stripped += 1;
+            }
+        }
+        loop {
+            match self.advance() {
+                None => return Err(DustError::new("unterminated triple-quoted string", line, col)),
+                Some(c) if c == quote => {
+                    // Check for closing triple quote
+                    if self.peek() == Some(quote) && self.chars.get(self.pos + 1).copied() == Some(quote) {
+                        self.advance(); self.advance();
+                        break;
+                    }
+                    s.push(c);
+                }
+                Some('\n') => {
+                    s.push('\n');
+                    let mut stripped = 0;
+                    while stripped < base_indent && self.peek() == Some(' ') {
+                        self.advance();
+                        stripped += 1;
+                    }
+                }
+                Some(c) => s.push(c),
+            }
+        }
+        // Strip trailing newline before closing quotes
+        if s.ends_with('\n') { s.pop(); }
         Ok(Token::Str(s))
     }
 
@@ -190,15 +225,58 @@ impl Lexer {
             match self.peek() {
                 None => { tokens.push(Spanned::new(Token::Eof, line, col)); break; }
                 Some('#') => { while !matches!(self.peek(), None | Some('\n')) { self.advance(); } }
+                Some('@') => {
+                    self.advance();
+                    let mut content = String::new();
+                    while !matches!(self.peek(), None | Some('\n')) {
+                        content.push(self.advance().unwrap());
+                    }
+                    tokens.push(Spanned::new(Token::Attr(content.trim().to_string()), line, col));
+                }
                 Some('\r') => { self.advance(); }
                 Some('\n') => { self.advance(); tokens.push(Spanned::new(Token::Newline, line, col)); }
                 Some('"') => {
                     self.advance();
-                    tokens.push(Spanned::new(self.lex_string(line, col)?, line, col));
+                    // """ multiline or " single-line
+                    if self.peek() == Some('"') && self.peek2() == Some('"') {
+                        self.advance(); self.advance();
+                        tokens.push(Spanned::new(self.lex_triple_string('"', line, col)?, line, col));
+                    } else {
+                        tokens.push(Spanned::new(self.lex_string(line, col)?, line, col));
+                    }
                 }
                 Some('\'') => {
-                    self.advance();
-                    tokens.push(Spanned::new(self.lex_single_quoted_str(line, col)?, line, col));
+                    self.advance(); // consume opening '
+                    // ''' multiline raw string
+                    if self.peek() == Some('\'') && self.peek2() == Some('\'') {
+                        self.advance(); self.advance();
+                        tokens.push(Spanned::new(self.lex_triple_string('\'', line, col)?, line, col));
+                        continue;
+                    }
+                    // Disambiguate: lifetime vs single-quoted string
+                    // Rule: if alphanumeric run is NOT followed by closing ' on same line → lifetime
+                    if matches!(self.peek(), Some(c) if c.is_alphanumeric() || c == '_') {
+                        // Lookahead: scan the alphanumeric run, check what follows
+                        let saved_pos = self.pos;
+                        let saved_line = self.line;
+                        let saved_col = self.col;
+                        let mut ident = String::new();
+                        while matches!(self.peek(), Some(c) if c.is_alphanumeric() || c == '_') {
+                            ident.push(self.advance().unwrap());
+                        }
+                        if self.peek() == Some('\'') {
+                            // 'abc' — single-quoted string (all alphanumeric, closed immediately)
+                            self.advance();
+                            tokens.push(Spanned::new(Token::Str(ident), line, col));
+                        } else {
+                            // 'de, 'a — lifetime
+                            tokens.push(Spanned::new(Token::Lifetime(ident), line, col));
+                            let _ = (saved_pos, saved_line, saved_col); // consumed correctly
+                        }
+                    } else {
+                        // Starts with non-alphanumeric: always a raw string
+                        tokens.push(Spanned::new(self.lex_single_quoted_str(line, col)?, line, col));
+                    }
                 }
                 Some(c) if c.is_ascii_digit() => {
                     self.advance();
@@ -206,17 +284,14 @@ impl Lexer {
                 }
                 Some(c) if c.is_alphabetic() || c == '_' => {
                     self.advance();
-                    // b'x' byte literal, c'x' char literal
-                    if (c == 'b' || c == 'c') && self.peek() == Some('\'') {
+                    // c'x' char literal, b'x' byte literal
+                    if (c == 'c' || c == 'b') && self.peek() == Some('\'') {
                         self.advance(); // consume '
                         let tok = self.lex_char(line, col)?;
-                        if c == 'b' {
-                            if let Token::Char(ch) = tok {
-                                tokens.push(Spanned::new(Token::Int(ch as i64), line, col));
-                            }
-                        } else {
-                            tokens.push(Spanned::new(tok, line, col));
-                        }
+                        let tok = if c == 'b' {
+                            match tok { Token::Char(ch) => Token::ByteChar(ch), _ => tok }
+                        } else { tok };
+                        tokens.push(Spanned::new(tok, line, col));
                         continue;
                     }
                     let tok = self.lex_ident(c);
@@ -236,8 +311,8 @@ impl Lexer {
                                else if self.peek() == Some('=') { self.advance(); Token::PlusEq }
                                else { Token::Plus },
                         '*' => if self.peek() == Some('*') { self.advance(); Token::StarStar }
-               else if self.peek() == Some('=') { self.advance(); Token::StarEq }
-               else { Token::Star },
+                               else if self.peek() == Some('=') { self.advance(); Token::StarEq }
+                               else { Token::Star },
                         '/' => if self.peek() == Some('=') { self.advance(); Token::SlashEq } else { Token::Slash },
                         '%' => Token::Percent,
                         '~' => Token::Tilde,
@@ -365,7 +440,7 @@ mod tests {
 
     #[test]
     fn lex_keyword_and_ident() {
-        assert_eq!(tokens("let x"), vec![Token::KwLet, Token::Ident("x".into()), Token::Eof]);
+        assert_eq!(tokens("let x = 1"), vec![Token::KwLet, Token::Ident("x".into()), Token::Eq, Token::Int(1), Token::Eof]);
     }
 
     #[test]
@@ -384,6 +459,40 @@ mod tests {
     }
 
     #[test]
+    fn lex_single_quoted_raw_string() {
+        assert_eq!(tokens(r#"'{"key": "val"}'"#), vec![Token::Str("{\"key\": \"val\"}".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn lex_triple_double_multiline() {
+        let src = "\"\"\"line one\nline two\"\"\"";
+        assert_eq!(tokens(src), vec![Token::Str("line one\nline two".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn lex_triple_double_strips_indent() {
+        let src = "let s = \"\"\"\n  hello\n  world\n\"\"\"";
+        let toks = tokens(src);
+        assert!(toks.contains(&Token::Str("hello\nworld".into())), "got: {:?}", toks);
+    }
+
+    #[test]
+    fn lex_triple_single_multiline() {
+        let src = "'''line one\nline two'''";
+        assert_eq!(tokens(src), vec![Token::Str("line one\nline two".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn lex_char_literal() {
+        assert_eq!(tokens("c'x'"), vec![Token::Char('x'), Token::Eof]);
+    }
+
+    #[test]
+    fn lex_lifetime() {
+        assert_eq!(tokens("'de"), vec![Token::Lifetime("de".into()), Token::Eof]);
+    }
+
+    #[test]
     fn lex_comment_skipped() {
         assert_eq!(tokens("# comment"), vec![Token::Eof]);
     }
@@ -399,14 +508,6 @@ mod tests {
         let toks = tokens(src);
         assert!(toks.contains(&Token::Indent), "expected Indent in {:?}", toks);
         assert!(toks.contains(&Token::Dedent), "expected Dedent in {:?}", toks);
-    }
-
-    #[test]
-    fn lex_multiline_string() {
-        // continuation indent stripped up to column of opening "
-        let src = "let s = \"line one\n         line two\"";
-        let toks = tokens(src);
-        assert!(toks.contains(&Token::Str("line one\nline two".into())), "got: {:?}", toks);
     }
 
     #[test]

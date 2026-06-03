@@ -284,10 +284,14 @@ impl Lexer {
                 }
                 Some(c) if c.is_alphabetic() || c == '_' => {
                     self.advance();
-                    // c'x' char literal
-                    if c == 'c' && self.peek() == Some('\'') {
+                    // c'x' char literal, b'x' byte literal
+                    if (c == 'c' || c == 'b') && self.peek() == Some('\'') {
                         self.advance(); // consume '
-                        tokens.push(Spanned::new(self.lex_char(line, col)?, line, col));
+                        let tok = self.lex_char(line, col)?;
+                        let tok = if c == 'b' {
+                            match tok { Token::Char(ch) => Token::ByteChar(ch), _ => tok }
+                        } else { tok };
+                        tokens.push(Spanned::new(tok, line, col));
                         continue;
                     }
                     let tok = self.lex_ident(c);

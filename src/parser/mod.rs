@@ -778,6 +778,7 @@ impl<'a> Parser<'a> {
             Token::Float(f) => { self.advance(); Ok(Expr::Float(f)) }
             Token::Str(s)  => { self.advance(); Ok(Expr::Str(s)) }
             Token::Char(c) => { self.advance(); Ok(Expr::Char(c)) }
+            Token::ByteChar(c) => { self.advance(); Ok(Expr::ByteChar(c)) }
             Token::Bool(b) => { self.advance(); Ok(Expr::Bool(b)) }
 
             // Zero-argument closure: || expr
@@ -1015,6 +1016,7 @@ impl<'a> Parser<'a> {
             Token::Float(f) => { self.advance(); Ok(Expr::Float(f)) }
             Token::Bool(b)  => { self.advance(); Ok(Expr::Bool(b)) }
             Token::Char(c)  => { self.advance(); Ok(Expr::Char(c)) }
+            Token::ByteChar(c) => { self.advance(); Ok(Expr::ByteChar(c)) }
             // Negative number: -n
             Token::Minus => {
                 self.advance();

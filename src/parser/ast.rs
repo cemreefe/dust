@@ -42,6 +42,7 @@ pub enum Expr {
     Float(f64),
     Str(String),    // raw string literal (may contain {name} interpolation)
     Char(char),
+    ByteChar(char),
     Bool(bool),
     Tuple(Vec<Expr>),
     Ident { name: String, line: usize, col: usize },

@@ -175,7 +175,7 @@ impl Emitter {
         let gp = if generics.is_empty() { String::new() } else { format!("<{generics}>") };
         let params_str = params.iter().map(emit_param).collect::<Vec<_>>().join(", ");
         let ret = ret_ty.map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
-        let body_str = if ret_ty.is_some() { self.emit_block(body, ret_ty) } else { self.emit_block_no_tail(body) };
+        let body_str = if ret_ty.is_some() { self.emit_block(body, ret_ty) } else { self.emit_block_no_tail(body, None) };
         format!("{async_kw}fn {name}{gp}({params_str}){ret} {{\n{body_str}}}\n")
     }
 
@@ -284,7 +284,7 @@ impl Emitter {
         let ret = m.ret_ty.as_ref().map(|t| format!(" -> {}", emit_ty_owned(t))).unwrap_or_default();
         match &m.body {
             Some(body) => {
-                let body_str = if m.ret_ty.is_some() { self.emit_block(body, m.ret_ty.as_ref()) } else { self.emit_block_no_tail(body) };
+                let body_str = if m.ret_ty.is_some() { self.emit_block(body, m.ret_ty.as_ref()) } else { self.emit_block_no_tail(body, None) };
                 format!("{async_kw}fn {}{gp}({params_str}){ret} {{\n{body_str}}}\n", m.name)
             }
             None => format!("{async_kw}fn {}{gp}({params_str}){ret};\n", m.name),
@@ -307,8 +307,8 @@ impl Emitter {
         self.emit_block_tail(stmts, ret_ty, true)
     }
 
-    fn emit_block_no_tail(&self, stmts: &[Stmt]) -> String {
-        self.emit_block_tail(stmts, None, false)
+    fn emit_block_no_tail(&self, stmts: &[Stmt], ret_ty: Option<&Ty>) -> String {
+        self.emit_block_tail(stmts, ret_ty, false)
     }
 
     fn emit_block_tail(&self, stmts: &[Stmt], ret_ty: Option<&Ty>, tail: bool) -> String {
@@ -395,13 +395,13 @@ impl Emitter {
             }
             Stmt::For { vars, iter, body, .. } => {
                 let pat = if vars.len() == 1 { vars[0].clone() } else { format!("({})", vars.join(", ")) };
-                format!("for {pat} in {} {{\n{}}}", self.emit_expr(iter), self.emit_block(body, ret_ty))
+                format!("for {pat} in {} {{\n{}}}", self.emit_expr(iter), self.emit_block_no_tail(body, ret_ty))
             }
             Stmt::While { cond, body, .. } => {
-                format!("while {} {{\n{}}}", self.emit_expr(cond), self.emit_block(body, ret_ty))
+                format!("while {} {{\n{}}}", self.emit_expr(cond), self.emit_block_no_tail(body, ret_ty))
             }
             Stmt::WhileLet { pattern, value, body, .. } => {
-                format!("while let {} = {} {{\n{}}}", self.emit_expr(pattern), self.emit_expr(value), self.emit_block(body, ret_ty))
+                format!("while let {} = {} {{\n{}}}", self.emit_expr(pattern), self.emit_expr(value), self.emit_block_no_tail(body, ret_ty))
             }
             Stmt::Break(..)    => "break".into(),
             Stmt::Continue(..) => "continue".into(),
@@ -414,6 +414,7 @@ impl Emitter {
     fn emit_expr(&self, expr: &Expr) -> String {
         match expr {
             Expr::Char(c)  => format!("'{}'", c.escape_default()),
+            Expr::ByteChar(c) => format!("b'{}'", c.escape_default()),
             Expr::Int(n)   => n.to_string(),
             Expr::Float(f) => { let s = format!("{f}"); if s.contains('.') { s } else { format!("{s}.0") } }
             Expr::Bool(b)  => b.to_string(),
@@ -721,7 +722,7 @@ impl Emitter {
     fn emit_expr_as_block_ret(&self, expr: &Expr, ret_ty: Option<&Ty>) -> String {
         match expr {
             Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, ret_ty)),
-            _ => format!("{{ {} }}", self.emit_expr_ret(expr, ret_ty)),
+            _ => format!("{{ {} }}", strip_outer_parens(self.emit_expr_ret(expr, ret_ty))),
         }
     }
 

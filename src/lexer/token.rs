@@ -5,6 +5,7 @@ pub enum Token {
     Float(f64),
     Str(String),
     Char(char),
+    ByteChar(char),
     Bool(bool),
 
     // Identifier

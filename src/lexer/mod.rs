@@ -187,9 +187,15 @@ impl Lexer {
     }
 
     // Lex a macro call: name! or name![...] — emit as Ident("name!{...}")
+    // Special case: vec![ is NOT collapsed — emitted as Ident("vec!") so the parser can
+    // handle spread items (..expr) individually.
     fn lex_macro(&mut self, name: String) -> Result<Token> {
         // consume the !
         self.advance();
+        // vec![ is handled by the parser token-by-token
+        if name == "vec" && self.peek() == Some('[') {
+            return Ok(Token::Ident("vec!".into()));
+        }
         let open = self.peek();
         let (open_ch, close_ch) = match open {
             Some('(') => ('(', ')'),
@@ -324,7 +330,7 @@ impl Lexer {
                         '}' => Token::RBrace,
                         ',' => Token::Comma,
                         '?' => Token::Question,
-                        '.' => Token::Dot,
+                        '.' => if self.peek() == Some('.') { self.advance(); Token::DotDot } else { Token::Dot },
                         '-' => if self.peek() == Some('>') { self.advance(); Token::Arrow }
                                else if self.peek() == Some('-') { self.advance(); Token::MinusMinus }
                                else if self.peek() == Some('=') { self.advance(); Token::MinusEq }

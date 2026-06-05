@@ -69,6 +69,7 @@ pub enum Token {
     PipePipeEq,    // ||=
     ColonColon,  // ::
     Dot,         // .
+    DotDot,      // ..
     Comma,       // ,
     Colon,       // :
     Ampersand,   // &

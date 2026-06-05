@@ -806,11 +806,12 @@ impl<'a> Parser<'a> {
 
             // Macro passthrough: stored as Ident("name!(...)")
             Token::Ident(s) if s.contains('!') => {
-                // vec! ns[item1, item2, ...] or vec! a::b::c[item1, ...] — namespaced vec literal
+                // vec! — handled token-by-token (lexer emits "vec!" + LBracket separately)
                 if s == "vec!" {
-                    // Lookahead: check for Ident (:: Ident)* [
+                    self.advance(); // consume "vec!"
+                    // vec! ns[item1, item2] — namespaced vec literal
                     let is_namespaced = {
-                        let mut off = 1usize;
+                        let mut off = 0usize;
                         let mut ok = false;
                         if let Token::Ident(n) = self.peek_at(off) {
                             if !n.contains('!') {
@@ -825,7 +826,6 @@ impl<'a> Parser<'a> {
                         ok
                     };
                     if is_namespaced {
-                        self.advance(); // consume "vec!"
                         let mut ns = self.expect_ident()?;
                         while self.eat(&Token::ColonColon) {
                             ns.push_str("::");
@@ -840,6 +840,19 @@ impl<'a> Parser<'a> {
                         self.expect(&Token::RBracket)?;
                         return Ok(Expr::NamespacedVec { ns, items });
                     }
+                    // vec![item, ..spread, item] — regular vec literal with possible spread
+                    self.expect(&Token::LBracket)?;
+                    let mut items: Vec<VecItem> = Vec::new();
+                    while !matches!(self.peek(), Token::RBracket | Token::Eof) {
+                        if self.eat(&Token::DotDot) {
+                            items.push(VecItem::Spread(self.parse_expr()?));
+                        } else {
+                            items.push(VecItem::Expr(self.parse_expr()?));
+                        }
+                        if !self.eat(&Token::Comma) { break; }
+                    }
+                    self.expect(&Token::RBracket)?;
+                    return Ok(Expr::VecLit { items, line, col });
                 }
                 self.advance();
                 Ok(Expr::Macro { raw: s, line, col })
@@ -853,15 +866,21 @@ impl<'a> Parser<'a> {
                 //     field: value
                 if matches!(self.peek(), Token::Newline)
                     && matches!(self.peek_at(1), Token::Indent)
-                    && matches!(self.peek_at(2), Token::Ident(_))
-                    && matches!(self.peek_at(3), Token::Colon)
+                    && (matches!(self.peek_at(2), Token::Ident(_)) && matches!(self.peek_at(3), Token::Colon)
+                        || matches!(self.peek_at(2), Token::DotDot))
                 {
                     self.advance(); // Newline
                     self.advance(); // Indent
                     let mut fields = Vec::new();
+                    let mut spread = None;
                     while !matches!(self.peek(), Token::Dedent | Token::Eof) {
                         self.skip_newlines();
                         if matches!(self.peek(), Token::Dedent) { break; }
+                        if self.eat(&Token::DotDot) {
+                            spread = Some(Box::new(self.parse_expr()?));
+                            self.skip_newlines();
+                            break; // spread must be last
+                        }
                         let fname = self.expect_ident()?;
                         self.expect(&Token::Colon)?;
                         let fval = self.parse_expr()?;
@@ -869,11 +888,17 @@ impl<'a> Parser<'a> {
                         self.skip_newlines();
                     }
                     self.expect(&Token::Dedent)?;
-                    Ok(Expr::StructLit { name, fields, line, col })
+                    Ok(Expr::StructLit { name, fields, spread, line, col })
                 // Inline struct literal: Name { field: value, ... } or Name { field, ... }
                 } else if self.eat(&Token::LBrace) {
                     let mut fields = Vec::new();
+                    let mut spread = None;
                     while !matches!(self.peek(), Token::RBrace | Token::Eof) {
+                        if self.eat(&Token::DotDot) {
+                            spread = Some(Box::new(self.parse_expr()?));
+                            self.eat(&Token::Comma);
+                            break; // spread must be last
+                        }
                         let fl = self.line(); let fc = self.col();
                         let fname = self.expect_ident()?;
                         // shorthand: `{ field }` == `{ field: field }`
@@ -886,7 +911,7 @@ impl<'a> Parser<'a> {
                         self.eat(&Token::Comma);
                     }
                     self.expect(&Token::RBrace)?;
-                    Ok(Expr::StructLit { name, fields, line, col })
+                    Ok(Expr::StructLit { name, fields, spread, line, col })
                 } else {
                     Ok(Expr::Ident { name, line, col })
                 }

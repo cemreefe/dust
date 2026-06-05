@@ -227,6 +227,17 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut Ctx) -> Result<()> {
             analyze_expr(obj, ctx)?;
             analyze_expr(idx, ctx)?;
         }
+        Expr::StructLit { fields, spread, .. } => {
+            for (_, v) in fields { analyze_expr(v, ctx)?; }
+            if let Some(sp) = spread { analyze_expr(sp, ctx)?; }
+        }
+        Expr::VecLit { items, .. } => {
+            for item in items {
+                match item {
+                    VecItem::Expr(e) | VecItem::Spread(e) => analyze_expr(e, ctx)?,
+                }
+            }
+        }
         _ => {}
     }
     Ok(())

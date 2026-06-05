@@ -458,14 +458,18 @@ impl Emitter {
                 format!("{}.{field}", self.emit_expr(obj))
             }
 
-            Expr::StructLit { name, fields, .. } => {
+            Expr::StructLit { name, fields, spread, .. } => {
                 let field_types = self.sig.struct_fields.get(name.as_str());
-                let fs = fields.iter()
+                let mut parts: Vec<String> = fields.iter()
                     .map(|(k, v)| {
                         let ty = field_types.and_then(|m| m.get(k.as_str()));
                         format!("{k}: {}", self.emit_expr_bare_owned(v, ty))
                     })
-                    .collect::<Vec<_>>().join(", ");
+                    .collect();
+                if let Some(sp) = spread {
+                    parts.push(format!("..{}", self.emit_expr_bare(sp)));
+                }
+                let fs = parts.join(", ");
                 format!("{name} {{ {fs} }}")
             }
 
@@ -550,6 +554,56 @@ impl Emitter {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("vec![{inner}]")
+            }
+
+            Expr::VecLit { items, .. } => {
+                // If there are spread items, emit as a block that extends
+                // e.g. vec![..a, 1, 2] → { let mut __v = a; __v.extend([1, 2]); __v }
+                // If items is just a plain list (no spread), emit vec![...]
+                let has_spread = items.iter().any(|i| matches!(i, VecItem::Spread(_)));
+                if has_spread {
+                    // Find first spread item — collect into it, then extend with trailing items
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut init_done = false;
+                    let mut trailing: Vec<String> = Vec::new();
+                    let mut in_trailing = false;
+                    for item in items {
+                        match item {
+                            VecItem::Spread(e) if !init_done => {
+                                parts.push(format!("let mut __v = {};", self.emit_expr_bare(e)));
+                                init_done = true;
+                                in_trailing = true;
+                            }
+                            VecItem::Spread(e) => {
+                                if !trailing.is_empty() {
+                                    parts.push(format!("__v.extend([{}]);", trailing.join(", ")));
+                                    trailing.clear();
+                                }
+                                parts.push(format!("__v.extend({});", self.emit_expr_bare(e)));
+                            }
+                            VecItem::Expr(e) if in_trailing => {
+                                trailing.push(self.emit_expr(e));
+                            }
+                            VecItem::Expr(e) => {
+                                // items before first spread — prepend to vec
+                                parts.push(format!("let mut __v = vec![{}];", self.emit_expr(e)));
+                                init_done = true;
+                                in_trailing = true;
+                            }
+                        }
+                    }
+                    if !trailing.is_empty() {
+                        parts.push(format!("__v.extend([{}]);", trailing.join(", ")));
+                    }
+                    parts.push("__v".to_string());
+                    format!("{{ {} }}", parts.join(" "))
+                } else {
+                    let inner = items.iter().map(|i| match i {
+                        VecItem::Expr(e) => self.emit_expr(e),
+                        VecItem::Spread(_) => unreachable!(),
+                    }).collect::<Vec<_>>().join(", ");
+                    format!("vec![{inner}]")
+                }
             }
         }
     }

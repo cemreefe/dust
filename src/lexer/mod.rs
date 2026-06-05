@@ -521,4 +521,27 @@ mod tests {
         assert_eq!(tokens("true"), vec![Token::Bool(true), Token::Eof]);
         assert_eq!(tokens("false"), vec![Token::Bool(false), Token::Eof]);
     }
+
+    #[test]
+    fn lex_dot_dot() {
+        assert_eq!(tokens(".."), vec![Token::DotDot, Token::Eof]);
+    }
+
+    #[test]
+    fn lex_dot_not_dot_dot() {
+        assert_eq!(tokens(".x"), vec![Token::Dot, Token::Ident("x".into()), Token::Eof]);
+    }
+
+    #[test]
+    fn lex_move_keyword() {
+        assert_eq!(tokens("move"), vec![Token::KwMove, Token::Eof]);
+    }
+
+    #[test]
+    fn lex_vec_bracket_not_collapsed() {
+        // vec![ should NOT be collapsed into a single Ident token
+        let toks = tokens("vec![1, 2]");
+        assert_eq!(toks[0], Token::Ident("vec!".into()), "expected vec! token, got {:?}", toks);
+        assert_eq!(toks[1], Token::LBracket, "expected LBracket, got {:?}", toks);
+    }
 }

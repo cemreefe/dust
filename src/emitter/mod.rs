@@ -1272,4 +1272,77 @@ mod tests {
         assert!(out.contains(r#""yes".to_string()"#), "got: {out}");
         assert!(out.contains(r#""no".to_string()"#), "got: {out}");
     }
+
+    // ── move closures ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn move_zero_arg_closure() {
+        let out = transpile("fn main()\n    let f = move -> 42");
+        assert!(out.contains("move || 42"), "got: {out}");
+    }
+
+    #[test]
+    fn move_closure_with_param() {
+        let out = transpile("fn main()\n    let f = move x -> x + 1");
+        assert!(out.contains("move |x"), "got: {out}");
+        assert!(out.contains("x + 1"), "got: {out}");
+    }
+
+    #[test]
+    fn zero_arg_closure_arrow() {
+        let out = transpile("fn main()\n    let f = -> 99");
+        assert!(out.contains("|| 99"), "got: {out}");
+    }
+
+    #[test]
+    fn multi_line_closure_body() {
+        let out = transpile("fn main()\n    let f = ->\n        let x = 1\n        x");
+        assert!(out.contains("|| {"), "got: {out}");
+        assert!(out.contains("let x = 1"), "got: {out}");
+    }
+
+    // ── if let ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn if_let_some() {
+        let out = transpile("fn main()\n    let v = 1\n    if let Some(n) = v\n        println!(\"{n}\")");
+        assert!(out.contains("if let Some(n) = v"), "got: {out}");
+    }
+
+    #[test]
+    fn if_let_with_else() {
+        let out = transpile("fn main()\n    let v = 1\n    if let Some(n) = v\n        println!(\"{n}\")\n    else\n        println!(\"none\")");
+        assert!(out.contains("if let Some(n) = v"), "got: {out}");
+        assert!(out.contains("else"), "got: {out}");
+    }
+
+    // ── struct spread ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn struct_spread_inline() {
+        let out = transpile("struct P\n    x: i32\n    y: i32\nfn main()\n    let base = P { x: 1, y: 2 }\n    let p = P { x: 9, ..base }");
+        assert!(out.contains("..base"), "got: {out}");
+        assert!(out.contains("x: 9"), "got: {out}");
+    }
+
+    #[test]
+    fn struct_spread_indented() {
+        let out = transpile("struct P\n    x: i32\n    y: i32\nfn main()\n    let base = P { x: 1, y: 2 }\n    let p = P\n        x: 9\n        ..base");
+        assert!(out.contains("..base"), "got: {out}");
+    }
+
+    // ── vec spread ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vec_no_spread_plain_macro() {
+        let out = transpile("fn main()\n    let v = vec![1, 2, 3]");
+        assert!(out.contains("vec![1, 2, 3]"), "got: {out}");
+    }
+
+    #[test]
+    fn vec_spread_emits_extend_block() {
+        let out = transpile("fn main()\n    let a = vec![1]\n    let b = vec![..a, 2]");
+        assert!(out.contains("__v"), "got: {out}");
+        assert!(out.contains("extend"), "got: {out}");
+    }
 }

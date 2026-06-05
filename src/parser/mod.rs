@@ -781,26 +781,26 @@ impl<'a> Parser<'a> {
             Token::ByteChar(c) => { self.advance(); Ok(Expr::ByteChar(c)) }
             Token::Bool(b) => { self.advance(); Ok(Expr::Bool(b)) }
 
-            // Zero-argument closure: || expr
-            Token::PipePipe => {
+            // Zero-argument closure: -> expr  or multi-line -> \n  body
+            Token::Arrow => {
                 self.advance();
-                let body = Box::new(self.parse_expr()?);
+                let body = self.parse_closure_body(line, col)?;
                 Ok(Expr::Closure { params: vec![], body, is_move: false, line, col })
             }
 
-            // move closure: move || expr  or  move x -> expr
+            // move closure: move -> expr  or  move x -> expr  (with optional multi-line body)
             Token::KwMove => {
                 self.advance();
-                if matches!(self.peek(), Token::PipePipe) {
+                if matches!(self.peek(), Token::Arrow) {
                     self.advance();
-                    let body = Box::new(self.parse_expr()?);
+                    let body = self.parse_closure_body(line, col)?;
                     Ok(Expr::Closure { params: vec![], body, is_move: true, line, col })
                 } else if self.is_closure_start() {
                     let mut cl = self.parse_closure(line, col)?;
                     if let Expr::Closure { ref mut is_move, .. } = cl { *is_move = true; }
                     Ok(cl)
                 } else {
-                    Err(DustError::new("expected `||` or closure params after `move`", self.line(), self.col()))
+                    Err(DustError::new("expected `->` or closure params after `move`", self.line(), self.col()))
                 }
             }
 
@@ -1262,8 +1262,22 @@ impl<'a> Parser<'a> {
             if !self.eat(&Token::Comma) { break; }
         }
         self.expect(&Token::Arrow)?;
-        let body = Box::new(self.parse_expr()?);
+        let body = self.parse_closure_body(line, col)?;
         Ok(Expr::Closure { params, body, is_move: false, line, col })
+    }
+
+    /// Parse the body of a closure after `->`: either a multi-line indented block
+    /// or a single expression on the same line.
+    fn parse_closure_body(&mut self, line: usize, col: usize) -> Result<Box<Expr>> {
+        // Peek past newlines to see if an indented block follows
+        let mut i = self.pos;
+        while matches!(self.tokens.get(i).map(|s| &s.value), Some(Token::Newline)) { i += 1; }
+        if matches!(self.tokens.get(i).map(|s| &s.value), Some(Token::Indent)) {
+            let stmts = self.parse_block()?;
+            Ok(Box::new(Expr::Block { stmts, line, col }))
+        } else {
+            Ok(Box::new(self.parse_expr()?))
+        }
     }
 }
 

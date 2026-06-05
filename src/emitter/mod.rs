@@ -492,7 +492,11 @@ impl Emitter {
                     else { format!("{}: {}", p.name, emit_ty_owned(&p.ty)) }
                 }).collect::<Vec<_>>().join(", ");
                 let move_kw = if *is_move { "move " } else { "" };
-                format!("{move_kw}|{ps}| {}", self.emit_expr_bare(body))
+                let body_str = match body.as_ref() {
+                    Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, None)),
+                    _ => self.emit_expr_bare(body),
+                };
+                format!("{move_kw}|{ps}| {body_str}")
             }
 
             Expr::IfLet { pattern, value, then_branch, else_branch, .. } => {

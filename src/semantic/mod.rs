@@ -238,6 +238,10 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut Ctx) -> Result<()> {
                 }
             }
         }
+        Expr::VecRepeat { elem, count, .. } => {
+            analyze_expr(elem, ctx)?;
+            analyze_expr(count, ctx)?;
+        }
         _ => {}
     }
     Ok(())

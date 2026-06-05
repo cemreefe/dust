@@ -840,6 +840,7 @@ impl<'a> Parser<'a> {
                         self.expect(&Token::RBracket)?;
                         return Ok(Expr::NamespacedVec { ns, items });
                     }
+                    // vec![expr; n] — repeat syntax: pass through as plain macro
                     // vec![item, ..spread, item] — regular vec literal with possible spread
                     self.expect(&Token::LBracket)?;
                     let mut items: Vec<VecItem> = Vec::new();
@@ -848,6 +849,18 @@ impl<'a> Parser<'a> {
                             items.push(VecItem::Spread(self.parse_expr()?));
                         } else {
                             items.push(VecItem::Expr(self.parse_expr()?));
+                        }
+                        // vec![expr; n] repeat syntax — re-emit as raw macro
+                        if self.eat(&Token::Semicolon) {
+                            let count = self.parse_expr()?;
+                            self.expect(&Token::RBracket)?;
+                            // Extract the single element
+                            let elem = match items.into_iter().next() {
+                                Some(VecItem::Expr(e)) => e,
+                                _ => return Err(DustError::new("vec![expr; n] requires a single expression before ';'", line, col)),
+                            };
+                            // We can't trivially stringify exprs here, so emit as VecRepeat
+                            return Ok(Expr::VecRepeat { elem: Box::new(elem), count: Box::new(count), line, col });
                         }
                         if !self.eat(&Token::Comma) { break; }
                     }

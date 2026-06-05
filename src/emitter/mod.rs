@@ -556,6 +556,10 @@ impl Emitter {
                 format!("vec![{inner}]")
             }
 
+            Expr::VecRepeat { elem, count, .. } => {
+                format!("vec![{}; {}]", self.emit_expr_bare(elem), self.emit_expr_bare(count))
+            }
+
             Expr::VecLit { items, .. } => {
                 // If there are spread items, emit as a block that extends
                 // e.g. vec![..a, 1, 2] → { let mut __v = a; __v.extend([1, 2]); __v }

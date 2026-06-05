@@ -150,6 +150,9 @@ pub enum Expr {
     // vec![item, ..spread, item] — vec literal with spread items
     // SpreadItem wraps a `..expr` inside a VecLit items list
     VecLit { items: Vec<VecItem>, line: usize, col: usize },
+
+    // vec![expr; n] — repeat syntax
+    VecRepeat { elem: Box<Expr>, count: Box<Expr>, line: usize, col: usize },
 }
 
 /// An item inside a vec literal — either a plain value or a spread (`..expr`)

@@ -175,6 +175,18 @@ impl Lexer {
                 is_float = true; s.push(c); self.advance();
             } else { break; }
         }
+        // Consume optional integer/float suffix (u8, i32, f64, usize, etc.)
+        // Suffixes start with a letter then may include digits (e.g. u8, i128, f64).
+        // If present, emit as a raw Ident so the emitter passes it through verbatim.
+        let mut suffix = String::new();
+        if matches!(self.peek(), Some(c) if c.is_alphabetic() || c == '_') {
+            while matches!(self.peek(), Some(c) if c.is_alphanumeric() || c == '_') {
+                suffix.push(self.advance().unwrap());
+            }
+        }
+        if !suffix.is_empty() {
+            return Token::Ident(format!("{s}{suffix}"));
+        }
         if is_float { Token::Float(s.parse().unwrap()) } else { Token::Int(s.parse().unwrap()) }
     }
 
@@ -348,6 +360,7 @@ impl Lexer {
                                    self.advance();
                                    if self.peek() == Some('=') { self.advance(); Token::PipePipeEq } else { Token::PipePipe }
                                } else { Token::Pipe },
+                        ';' => Token::Semicolon,
                         c => return Err(DustError::new(format!("unexpected character '{c}'"), line, col)),
                     };
                     tokens.push(Spanned::new(tok, line, col));

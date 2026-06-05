@@ -77,6 +77,7 @@ pub enum Token {
     AndAnd,      // &&
     PipePipe,    // ||
     Tilde,       // ~  (uninitialized binding marker)
+    Semicolon,   // ;  (used in vec![expr; n] repeat syntax)
 
     // Delimiters
     LParen,

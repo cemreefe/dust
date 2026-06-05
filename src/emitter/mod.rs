@@ -486,12 +486,23 @@ impl Emitter {
                 format!("match {s} {{\n{arms_str}\n}}")
             }
 
-            Expr::Closure { params, body, .. } => {
+            Expr::Closure { params, body, is_move, .. } => {
                 let ps = params.iter().map(|p| {
                     if p.ty == Ty::SelfTy { "self".into() }
                     else { format!("{}: {}", p.name, emit_ty_owned(&p.ty)) }
                 }).collect::<Vec<_>>().join(", ");
-                format!("|{ps}| {}", self.emit_expr_bare(body))
+                let move_kw = if *is_move { "move " } else { "" };
+                format!("{move_kw}|{ps}| {}", self.emit_expr_bare(body))
+            }
+
+            Expr::IfLet { pattern, value, then_branch, else_branch, .. } => {
+                let pat = self.emit_expr(pattern);
+                let val = self.emit_expr(value);
+                let t = self.emit_expr_as_block(then_branch);
+                match else_branch {
+                    None    => format!("if let {pat} = {val} {t}"),
+                    Some(e) => format!("if let {pat} = {val} {t} else {}", self.emit_expr_as_block(e)),
+                }
             }
 
             Expr::Tuple(elems) => {
@@ -729,6 +740,15 @@ impl Emitter {
     /// Like emit_expr but threads ret_ty into block-containing sub-expressions (if, match, block).
     fn emit_expr_ret(&self, expr: &Expr, ret_ty: Option<&Ty>) -> String {
         match expr {
+            Expr::IfLet { pattern, value, then_branch, else_branch, .. } => {
+                let pat = self.emit_expr(pattern);
+                let val = self.emit_expr(value);
+                let t = self.emit_expr_as_block_ret(then_branch, ret_ty);
+                match else_branch {
+                    None    => format!("if let {pat} = {val} {t}"),
+                    Some(e) => format!("if let {pat} = {val} {t} else {}", self.emit_expr_as_block_ret(e, ret_ty)),
+                }
+            }
             Expr::If { cond, then_branch, else_branch, .. } => {
                 let c = self.emit_expr_bare(cond);
                 let t = self.emit_expr_as_block_ret(then_branch, ret_ty);

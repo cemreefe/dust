@@ -40,6 +40,7 @@ pub enum Token {
     KwContinue,
     KwSelf,
     KwAs,
+    KwMove,
 
     // Operators
     Arrow,       // ->
@@ -129,6 +130,7 @@ impl Token {
             "continue" => Some(Token::KwContinue),
             "self"     => Some(Token::KwSelf),
             "as"       => Some(Token::KwAs),
+            "move"     => Some(Token::KwMove),
             "true"     => Some(Token::Bool(true)),
             "false"    => Some(Token::Bool(false)),
             _          => None,

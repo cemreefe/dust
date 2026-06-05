@@ -96,10 +96,21 @@ pub enum Expr {
         col: usize,
     },
 
-    // x: i32, y: i32 -> x + y
+    // x: i32, y: i32 -> x + y   or   move || expr
     Closure {
         params: Vec<Param>,
         body: Box<Expr>,
+        is_move: bool,
+        line: usize,
+        col: usize,
+    },
+
+    // if let PATTERN = VALUE { ... } [else { ... }]
+    IfLet {
+        pattern: Box<Expr>,
+        value: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
         line: usize,
         col: usize,
     },

@@ -216,6 +216,12 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut Ctx) -> Result<()> {
             analyze_expr(inner, ctx)?;
         }
         Expr::Closure { body, .. } => analyze_expr(body, ctx)?,
+        Expr::IfLet { value, then_branch, else_branch, .. } => {
+            analyze_expr(value, ctx)?;
+            let mut child = ctx.child();
+            analyze_expr(then_branch, &mut child)?;
+            if let Some(e) = else_branch { analyze_expr(e, ctx)?; }
+        }
         Expr::Turbofish { inner, .. } => analyze_expr(inner, ctx)?,
         Expr::Index { obj, idx, .. } => {
             analyze_expr(obj, ctx)?;

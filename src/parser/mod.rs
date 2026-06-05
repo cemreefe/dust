@@ -785,7 +785,23 @@ impl<'a> Parser<'a> {
             Token::PipePipe => {
                 self.advance();
                 let body = Box::new(self.parse_expr()?);
-                Ok(Expr::Closure { params: vec![], body, line, col })
+                Ok(Expr::Closure { params: vec![], body, is_move: false, line, col })
+            }
+
+            // move closure: move || expr  or  move x -> expr
+            Token::KwMove => {
+                self.advance();
+                if matches!(self.peek(), Token::PipePipe) {
+                    self.advance();
+                    let body = Box::new(self.parse_expr()?);
+                    Ok(Expr::Closure { params: vec![], body, is_move: true, line, col })
+                } else if self.is_closure_start() {
+                    let mut cl = self.parse_closure(line, col)?;
+                    if let Expr::Closure { ref mut is_move, .. } = cl { *is_move = true; }
+                    Ok(cl)
+                } else {
+                    Err(DustError::new("expected `||` or closure params after `move`", self.line(), self.col()))
+                }
             }
 
             // Macro passthrough: stored as Ident("name!(...)")
@@ -896,6 +912,38 @@ impl<'a> Parser<'a> {
 
             Token::KwIf | Token::KwElif => {
                 self.advance();
+
+                // if let PATTERN = VALUE  BLOCK  [elif/else ...]
+                if self.eat(&Token::KwLet) {
+                    let pattern = Box::new(self.parse_pattern()?);
+                    self.expect(&Token::Eq)?;
+                    let value = Box::new(self.parse_expr()?);
+                    let stmts = self.parse_block()?;
+                    let bl = line; let bc = col;
+                    self.skip_newlines();
+                    let else_branch = if matches!(self.peek(), Token::KwElif) {
+                        Some(Box::new(self.parse_expr()?))
+                    } else if self.eat(&Token::KwElse) {
+                        self.skip_newlines();
+                        if matches!(self.peek(), Token::KwIf | Token::KwElif) {
+                            Some(Box::new(self.parse_expr()?))
+                        } else if matches!(self.peek(), Token::Indent) {
+                            let es = self.parse_block()?;
+                            Some(Box::new(Expr::Block { stmts: es, line: bl, col: bc }))
+                        } else {
+                            Some(Box::new(self.parse_expr()?))
+                        }
+                    } else { None };
+                    return Ok(Expr::IfLet {
+                        pattern,
+                        value,
+                        then_branch: Box::new(Expr::Block { stmts, line: bl, col: bc }),
+                        else_branch,
+                        line,
+                        col,
+                    });
+                }
+
                 let cond = Box::new(self.parse_expr()?);
 
                 let (then_branch, else_branch) = if self.eat(&Token::KwThen) {
@@ -1215,7 +1263,7 @@ impl<'a> Parser<'a> {
         }
         self.expect(&Token::Arrow)?;
         let body = Box::new(self.parse_expr()?);
-        Ok(Expr::Closure { params, body, line, col })
+        Ok(Expr::Closure { params, body, is_move: false, line, col })
     }
 }
 

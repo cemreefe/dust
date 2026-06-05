@@ -781,20 +781,37 @@ impl<'a> Parser<'a> {
             Token::ByteChar(c) => { self.advance(); Ok(Expr::ByteChar(c)) }
             Token::Bool(b) => { self.advance(); Ok(Expr::Bool(b)) }
 
-            // Zero-argument closure: || expr
-            Token::PipePipe => {
+            // Zero-argument closure: -> expr  or multi-line -> \n  body
+            Token::Arrow => {
                 self.advance();
-                let body = Box::new(self.parse_expr()?);
-                Ok(Expr::Closure { params: vec![], body, line, col })
+                let body = self.parse_closure_body(line, col)?;
+                Ok(Expr::Closure { params: vec![], body, is_move: false, line, col })
+            }
+
+            // move closure: move -> expr  or  move x -> expr  (with optional multi-line body)
+            Token::KwMove => {
+                self.advance();
+                if matches!(self.peek(), Token::Arrow) {
+                    self.advance();
+                    let body = self.parse_closure_body(line, col)?;
+                    Ok(Expr::Closure { params: vec![], body, is_move: true, line, col })
+                } else if self.is_closure_start() {
+                    let mut cl = self.parse_closure(line, col)?;
+                    if let Expr::Closure { ref mut is_move, .. } = cl { *is_move = true; }
+                    Ok(cl)
+                } else {
+                    Err(DustError::new("expected `->` or closure params after `move`", self.line(), self.col()))
+                }
             }
 
             // Macro passthrough: stored as Ident("name!(...)")
             Token::Ident(s) if s.contains('!') => {
-                // vec! ns[item1, item2, ...] or vec! a::b::c[item1, ...] — namespaced vec literal
+                // vec! — handled token-by-token (lexer emits "vec!" + LBracket separately)
                 if s == "vec!" {
-                    // Lookahead: check for Ident (:: Ident)* [
+                    self.advance(); // consume "vec!"
+                    // vec! ns[item1, item2] — namespaced vec literal
                     let is_namespaced = {
-                        let mut off = 1usize;
+                        let mut off = 0usize;
                         let mut ok = false;
                         if let Token::Ident(n) = self.peek_at(off) {
                             if !n.contains('!') {
@@ -809,7 +826,6 @@ impl<'a> Parser<'a> {
                         ok
                     };
                     if is_namespaced {
-                        self.advance(); // consume "vec!"
                         let mut ns = self.expect_ident()?;
                         while self.eat(&Token::ColonColon) {
                             ns.push_str("::");
@@ -824,6 +840,32 @@ impl<'a> Parser<'a> {
                         self.expect(&Token::RBracket)?;
                         return Ok(Expr::NamespacedVec { ns, items });
                     }
+                    // vec![expr; n] — repeat syntax: pass through as plain macro
+                    // vec![item, ..spread, item] — regular vec literal with possible spread
+                    self.expect(&Token::LBracket)?;
+                    let mut items: Vec<VecItem> = Vec::new();
+                    while !matches!(self.peek(), Token::RBracket | Token::Eof) {
+                        if self.eat(&Token::DotDot) {
+                            items.push(VecItem::Spread(self.parse_expr()?));
+                        } else {
+                            items.push(VecItem::Expr(self.parse_expr()?));
+                        }
+                        // vec![expr; n] repeat syntax — re-emit as raw macro
+                        if self.eat(&Token::Semicolon) {
+                            let count = self.parse_expr()?;
+                            self.expect(&Token::RBracket)?;
+                            // Extract the single element
+                            let elem = match items.into_iter().next() {
+                                Some(VecItem::Expr(e)) => e,
+                                _ => return Err(DustError::new("vec![expr; n] requires a single expression before ';'", line, col)),
+                            };
+                            // We can't trivially stringify exprs here, so emit as VecRepeat
+                            return Ok(Expr::VecRepeat { elem: Box::new(elem), count: Box::new(count), line, col });
+                        }
+                        if !self.eat(&Token::Comma) { break; }
+                    }
+                    self.expect(&Token::RBracket)?;
+                    return Ok(Expr::VecLit { items, line, col });
                 }
                 self.advance();
                 Ok(Expr::Macro { raw: s, line, col })
@@ -837,15 +879,21 @@ impl<'a> Parser<'a> {
                 //     field: value
                 if matches!(self.peek(), Token::Newline)
                     && matches!(self.peek_at(1), Token::Indent)
-                    && matches!(self.peek_at(2), Token::Ident(_))
-                    && matches!(self.peek_at(3), Token::Colon)
+                    && (matches!(self.peek_at(2), Token::Ident(_)) && matches!(self.peek_at(3), Token::Colon)
+                        || matches!(self.peek_at(2), Token::DotDot))
                 {
                     self.advance(); // Newline
                     self.advance(); // Indent
                     let mut fields = Vec::new();
+                    let mut spread = None;
                     while !matches!(self.peek(), Token::Dedent | Token::Eof) {
                         self.skip_newlines();
                         if matches!(self.peek(), Token::Dedent) { break; }
+                        if self.eat(&Token::DotDot) {
+                            spread = Some(Box::new(self.parse_expr()?));
+                            self.skip_newlines();
+                            break; // spread must be last
+                        }
                         let fname = self.expect_ident()?;
                         self.expect(&Token::Colon)?;
                         let fval = self.parse_expr()?;
@@ -853,11 +901,17 @@ impl<'a> Parser<'a> {
                         self.skip_newlines();
                     }
                     self.expect(&Token::Dedent)?;
-                    Ok(Expr::StructLit { name, fields, line, col })
+                    Ok(Expr::StructLit { name, fields, spread, line, col })
                 // Inline struct literal: Name { field: value, ... } or Name { field, ... }
                 } else if self.eat(&Token::LBrace) {
                     let mut fields = Vec::new();
+                    let mut spread = None;
                     while !matches!(self.peek(), Token::RBrace | Token::Eof) {
+                        if self.eat(&Token::DotDot) {
+                            spread = Some(Box::new(self.parse_expr()?));
+                            self.eat(&Token::Comma);
+                            break; // spread must be last
+                        }
                         let fl = self.line(); let fc = self.col();
                         let fname = self.expect_ident()?;
                         // shorthand: `{ field }` == `{ field: field }`
@@ -870,7 +924,7 @@ impl<'a> Parser<'a> {
                         self.eat(&Token::Comma);
                     }
                     self.expect(&Token::RBrace)?;
-                    Ok(Expr::StructLit { name, fields, line, col })
+                    Ok(Expr::StructLit { name, fields, spread, line, col })
                 } else {
                     Ok(Expr::Ident { name, line, col })
                 }
@@ -896,6 +950,38 @@ impl<'a> Parser<'a> {
 
             Token::KwIf | Token::KwElif => {
                 self.advance();
+
+                // if let PATTERN = VALUE  BLOCK  [elif/else ...]
+                if self.eat(&Token::KwLet) {
+                    let pattern = Box::new(self.parse_pattern()?);
+                    self.expect(&Token::Eq)?;
+                    let value = Box::new(self.parse_expr()?);
+                    let stmts = self.parse_block()?;
+                    let bl = line; let bc = col;
+                    self.skip_newlines();
+                    let else_branch = if matches!(self.peek(), Token::KwElif) {
+                        Some(Box::new(self.parse_expr()?))
+                    } else if self.eat(&Token::KwElse) {
+                        self.skip_newlines();
+                        if matches!(self.peek(), Token::KwIf | Token::KwElif) {
+                            Some(Box::new(self.parse_expr()?))
+                        } else if matches!(self.peek(), Token::Indent) {
+                            let es = self.parse_block()?;
+                            Some(Box::new(Expr::Block { stmts: es, line: bl, col: bc }))
+                        } else {
+                            Some(Box::new(self.parse_expr()?))
+                        }
+                    } else { None };
+                    return Ok(Expr::IfLet {
+                        pattern,
+                        value,
+                        then_branch: Box::new(Expr::Block { stmts, line: bl, col: bc }),
+                        else_branch,
+                        line,
+                        col,
+                    });
+                }
+
                 let cond = Box::new(self.parse_expr()?);
 
                 let (then_branch, else_branch) = if self.eat(&Token::KwThen) {
@@ -1214,8 +1300,22 @@ impl<'a> Parser<'a> {
             if !self.eat(&Token::Comma) { break; }
         }
         self.expect(&Token::Arrow)?;
-        let body = Box::new(self.parse_expr()?);
-        Ok(Expr::Closure { params, body, line, col })
+        let body = self.parse_closure_body(line, col)?;
+        Ok(Expr::Closure { params, body, is_move: false, line, col })
+    }
+
+    /// Parse the body of a closure after `->`: either a multi-line indented block
+    /// or a single expression on the same line.
+    fn parse_closure_body(&mut self, line: usize, col: usize) -> Result<Box<Expr>> {
+        // Peek past newlines to see if an indented block follows
+        let mut i = self.pos;
+        while matches!(self.tokens.get(i).map(|s| &s.value), Some(Token::Newline)) { i += 1; }
+        if matches!(self.tokens.get(i).map(|s| &s.value), Some(Token::Indent)) {
+            let stmts = self.parse_block()?;
+            Ok(Box::new(Expr::Block { stmts, line, col }))
+        } else {
+            Ok(Box::new(self.parse_expr()?))
+        }
     }
 }
 

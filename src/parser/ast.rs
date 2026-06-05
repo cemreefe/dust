@@ -74,10 +74,11 @@ pub enum Expr {
         line: usize,
         col: usize,
     },
-    // Struct literal: Foo { x: 1, y: 2 }
+    // Struct literal: Foo { x: 1, y: 2 } or Foo { x: 1, ..base }
     StructLit {
         name: String,
         fields: Vec<(String, Expr)>,
+        spread: Option<Box<Expr>>,  // ..expr  struct update syntax
         line: usize,
         col: usize,
     },
@@ -96,10 +97,21 @@ pub enum Expr {
         col: usize,
     },
 
-    // x: i32, y: i32 -> x + y
+    // x: i32, y: i32 -> x + y   or   move || expr
     Closure {
         params: Vec<Param>,
         body: Box<Expr>,
+        is_move: bool,
+        line: usize,
+        col: usize,
+    },
+
+    // if let PATTERN = VALUE { ... } [else { ... }]
+    IfLet {
+        pattern: Box<Expr>,
+        value: Box<Expr>,
+        then_branch: Box<Expr>,
+        else_branch: Option<Box<Expr>>,
         line: usize,
         col: usize,
     },
@@ -134,6 +146,20 @@ pub enum Expr {
 
     // vec! Namespace[Circle(3.0), Rect(4.0, 5.0)] — namespaced vec literal
     NamespacedVec { ns: String, items: Vec<Expr> },
+
+    // vec![item, ..spread, item] — vec literal with spread items
+    // SpreadItem wraps a `..expr` inside a VecLit items list
+    VecLit { items: Vec<VecItem>, line: usize, col: usize },
+
+    // vec![expr; n] — repeat syntax
+    VecRepeat { elem: Box<Expr>, count: Box<Expr>, line: usize, col: usize },
+}
+
+/// An item inside a vec literal — either a plain value or a spread (`..expr`)
+#[derive(Debug, Clone)]
+pub enum VecItem {
+    Expr(Expr),
+    Spread(Expr),
 }
 
 #[derive(Debug, Clone, PartialEq)]

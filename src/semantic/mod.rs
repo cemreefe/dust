@@ -216,10 +216,31 @@ fn analyze_expr(expr: &mut Expr, ctx: &mut Ctx) -> Result<()> {
             analyze_expr(inner, ctx)?;
         }
         Expr::Closure { body, .. } => analyze_expr(body, ctx)?,
+        Expr::IfLet { value, then_branch, else_branch, .. } => {
+            analyze_expr(value, ctx)?;
+            let mut child = ctx.child();
+            analyze_expr(then_branch, &mut child)?;
+            if let Some(e) = else_branch { analyze_expr(e, ctx)?; }
+        }
         Expr::Turbofish { inner, .. } => analyze_expr(inner, ctx)?,
         Expr::Index { obj, idx, .. } => {
             analyze_expr(obj, ctx)?;
             analyze_expr(idx, ctx)?;
+        }
+        Expr::StructLit { fields, spread, .. } => {
+            for (_, v) in fields { analyze_expr(v, ctx)?; }
+            if let Some(sp) = spread { analyze_expr(sp, ctx)?; }
+        }
+        Expr::VecLit { items, .. } => {
+            for item in items {
+                match item {
+                    VecItem::Expr(e) | VecItem::Spread(e) => analyze_expr(e, ctx)?,
+                }
+            }
+        }
+        Expr::VecRepeat { elem, count, .. } => {
+            analyze_expr(elem, ctx)?;
+            analyze_expr(count, ctx)?;
         }
         _ => {}
     }

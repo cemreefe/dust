@@ -458,14 +458,18 @@ impl Emitter {
                 format!("{}.{field}", self.emit_expr(obj))
             }
 
-            Expr::StructLit { name, fields, .. } => {
+            Expr::StructLit { name, fields, spread, .. } => {
                 let field_types = self.sig.struct_fields.get(name.as_str());
-                let fs = fields.iter()
+                let mut parts: Vec<String> = fields.iter()
                     .map(|(k, v)| {
                         let ty = field_types.and_then(|m| m.get(k.as_str()));
                         format!("{k}: {}", self.emit_expr_bare_owned(v, ty))
                     })
-                    .collect::<Vec<_>>().join(", ");
+                    .collect();
+                if let Some(sp) = spread {
+                    parts.push(format!("..{}", self.emit_expr_bare(sp)));
+                }
+                let fs = parts.join(", ");
                 format!("{name} {{ {fs} }}")
             }
 
@@ -486,12 +490,27 @@ impl Emitter {
                 format!("match {s} {{\n{arms_str}\n}}")
             }
 
-            Expr::Closure { params, body, .. } => {
+            Expr::Closure { params, body, is_move, .. } => {
                 let ps = params.iter().map(|p| {
                     if p.ty == Ty::SelfTy { "self".into() }
                     else { format!("{}: {}", p.name, emit_ty_owned(&p.ty)) }
                 }).collect::<Vec<_>>().join(", ");
-                format!("|{ps}| {}", self.emit_expr_bare(body))
+                let move_kw = if *is_move { "move " } else { "" };
+                let body_str = match body.as_ref() {
+                    Expr::Block { stmts, .. } => format!("{{\n{}}}", self.emit_block(stmts, None)),
+                    _ => self.emit_expr_bare(body),
+                };
+                format!("{move_kw}|{ps}| {body_str}")
+            }
+
+            Expr::IfLet { pattern, value, then_branch, else_branch, .. } => {
+                let pat = self.emit_expr(pattern);
+                let val = self.emit_expr(value);
+                let t = self.emit_expr_as_block(then_branch);
+                match else_branch {
+                    None    => format!("if let {pat} = {val} {t}"),
+                    Some(e) => format!("if let {pat} = {val} {t} else {}", self.emit_expr_as_block(e)),
+                }
             }
 
             Expr::Tuple(elems) => {
@@ -535,6 +554,60 @@ impl Emitter {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("vec![{inner}]")
+            }
+
+            Expr::VecRepeat { elem, count, .. } => {
+                format!("vec![{}; {}]", self.emit_expr_bare(elem), self.emit_expr_bare(count))
+            }
+
+            Expr::VecLit { items, .. } => {
+                // If there are spread items, emit as a block that extends
+                // e.g. vec![..a, 1, 2] → { let mut __v = a; __v.extend([1, 2]); __v }
+                // If items is just a plain list (no spread), emit vec![...]
+                let has_spread = items.iter().any(|i| matches!(i, VecItem::Spread(_)));
+                if has_spread {
+                    // Find first spread item — collect into it, then extend with trailing items
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut init_done = false;
+                    let mut trailing: Vec<String> = Vec::new();
+                    let mut in_trailing = false;
+                    for item in items {
+                        match item {
+                            VecItem::Spread(e) if !init_done => {
+                                parts.push(format!("let mut __v = {};", self.emit_expr_bare(e)));
+                                init_done = true;
+                                in_trailing = true;
+                            }
+                            VecItem::Spread(e) => {
+                                if !trailing.is_empty() {
+                                    parts.push(format!("__v.extend([{}]);", trailing.join(", ")));
+                                    trailing.clear();
+                                }
+                                parts.push(format!("__v.extend({});", self.emit_expr_bare(e)));
+                            }
+                            VecItem::Expr(e) if in_trailing => {
+                                trailing.push(self.emit_expr(e));
+                            }
+                            VecItem::Expr(e) => {
+                                // items before first spread — prepend to vec
+                                parts.push(format!("let mut __v = vec![{}];", self.emit_expr(e)));
+                                init_done = true;
+                                in_trailing = true;
+                            }
+                        }
+                    }
+                    if !trailing.is_empty() {
+                        parts.push(format!("__v.extend([{}]);", trailing.join(", ")));
+                    }
+                    parts.push("__v".to_string());
+                    format!("{{ {} }}", parts.join(" "))
+                } else {
+                    let inner = items.iter().map(|i| match i {
+                        VecItem::Expr(e) => self.emit_expr(e),
+                        VecItem::Spread(_) => unreachable!(),
+                    }).collect::<Vec<_>>().join(", ");
+                    format!("vec![{inner}]")
+                }
             }
         }
     }
@@ -729,6 +802,15 @@ impl Emitter {
     /// Like emit_expr but threads ret_ty into block-containing sub-expressions (if, match, block).
     fn emit_expr_ret(&self, expr: &Expr, ret_ty: Option<&Ty>) -> String {
         match expr {
+            Expr::IfLet { pattern, value, then_branch, else_branch, .. } => {
+                let pat = self.emit_expr(pattern);
+                let val = self.emit_expr(value);
+                let t = self.emit_expr_as_block_ret(then_branch, ret_ty);
+                match else_branch {
+                    None    => format!("if let {pat} = {val} {t}"),
+                    Some(e) => format!("if let {pat} = {val} {t} else {}", self.emit_expr_as_block_ret(e, ret_ty)),
+                }
+            }
             Expr::If { cond, then_branch, else_branch, .. } => {
                 let c = self.emit_expr_bare(cond);
                 let t = self.emit_expr_as_block_ret(then_branch, ret_ty);
@@ -1193,5 +1275,78 @@ mod tests {
         let out = transpile("fn f(x: bool) -> str\n    if x\n        return \"yes\"\n    \"no\"");
         assert!(out.contains(r#""yes".to_string()"#), "got: {out}");
         assert!(out.contains(r#""no".to_string()"#), "got: {out}");
+    }
+
+    // ── move closures ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn move_zero_arg_closure() {
+        let out = transpile("fn main()\n    let f = move -> 42");
+        assert!(out.contains("move || 42"), "got: {out}");
+    }
+
+    #[test]
+    fn move_closure_with_param() {
+        let out = transpile("fn main()\n    let f = move x -> x + 1");
+        assert!(out.contains("move |x"), "got: {out}");
+        assert!(out.contains("x + 1"), "got: {out}");
+    }
+
+    #[test]
+    fn zero_arg_closure_arrow() {
+        let out = transpile("fn main()\n    let f = -> 99");
+        assert!(out.contains("|| 99"), "got: {out}");
+    }
+
+    #[test]
+    fn multi_line_closure_body() {
+        let out = transpile("fn main()\n    let f = ->\n        let x = 1\n        x");
+        assert!(out.contains("|| {"), "got: {out}");
+        assert!(out.contains("let x = 1"), "got: {out}");
+    }
+
+    // ── if let ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn if_let_some() {
+        let out = transpile("fn main()\n    let v = 1\n    if let Some(n) = v\n        println!(\"{n}\")");
+        assert!(out.contains("if let Some(n) = v"), "got: {out}");
+    }
+
+    #[test]
+    fn if_let_with_else() {
+        let out = transpile("fn main()\n    let v = 1\n    if let Some(n) = v\n        println!(\"{n}\")\n    else\n        println!(\"none\")");
+        assert!(out.contains("if let Some(n) = v"), "got: {out}");
+        assert!(out.contains("else"), "got: {out}");
+    }
+
+    // ── struct spread ─────────────────────────────────────────────────────────
+
+    #[test]
+    fn struct_spread_inline() {
+        let out = transpile("struct P\n    x: i32\n    y: i32\nfn main()\n    let base = P { x: 1, y: 2 }\n    let p = P { x: 9, ..base }");
+        assert!(out.contains("..base"), "got: {out}");
+        assert!(out.contains("x: 9"), "got: {out}");
+    }
+
+    #[test]
+    fn struct_spread_indented() {
+        let out = transpile("struct P\n    x: i32\n    y: i32\nfn main()\n    let base = P { x: 1, y: 2 }\n    let p = P\n        x: 9\n        ..base");
+        assert!(out.contains("..base"), "got: {out}");
+    }
+
+    // ── vec spread ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn vec_no_spread_plain_macro() {
+        let out = transpile("fn main()\n    let v = vec![1, 2, 3]");
+        assert!(out.contains("vec![1, 2, 3]"), "got: {out}");
+    }
+
+    #[test]
+    fn vec_spread_emits_extend_block() {
+        let out = transpile("fn main()\n    let a = vec![1]\n    let b = vec![..a, 2]");
+        assert!(out.contains("__v"), "got: {out}");
+        assert!(out.contains("extend"), "got: {out}");
     }
 }

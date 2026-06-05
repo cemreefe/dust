@@ -40,6 +40,7 @@ pub enum Token {
     KwContinue,
     KwSelf,
     KwAs,
+    KwMove,
 
     // Operators
     Arrow,       // ->
@@ -68,6 +69,7 @@ pub enum Token {
     PipePipeEq,    // ||=
     ColonColon,  // ::
     Dot,         // .
+    DotDot,      // ..
     Comma,       // ,
     Colon,       // :
     Ampersand,   // &
@@ -75,6 +77,7 @@ pub enum Token {
     AndAnd,      // &&
     PipePipe,    // ||
     Tilde,       // ~  (uninitialized binding marker)
+    Semicolon,   // ;  (used in vec![expr; n] repeat syntax)
 
     // Delimiters
     LParen,
@@ -129,6 +132,7 @@ impl Token {
             "continue" => Some(Token::KwContinue),
             "self"     => Some(Token::KwSelf),
             "as"       => Some(Token::KwAs),
+            "move"     => Some(Token::KwMove),
             "true"     => Some(Token::Bool(true)),
             "false"    => Some(Token::Bool(false)),
             _          => None,
